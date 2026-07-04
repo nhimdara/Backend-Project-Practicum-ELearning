@@ -303,9 +303,9 @@ app.post("/api/login", async (req, res) => {
         major: user.major || null,
         startYear: user.start_year || null,
         endYear: user.end_year || null,
-        academicYear:
-          user.academic_year ||
-          (user.start_year ? getCurrentAcademicYear(user.start_year) : null),
+        academicYear: user.start_year
+          ? getCurrentAcademicYear(user.start_year)
+          : user.academic_year || null,
         needsMajorSelect:
           !user.major && (user.role === "student" || user.role === "teacher"),
       },
@@ -332,7 +332,14 @@ app.get("/api/users", async (req, res) => {
               last_login
        FROM users ORDER BY id DESC`,
     );
-    res.json(rows);
+    res.json(
+      rows.map((row) => ({
+        ...row,
+        academicYear: row.startYear
+          ? getCurrentAcademicYear(row.startYear)
+          : row.academicYear,
+      })),
+    );
   } catch (err) {
     console.error("❌ /api/users error:", err.message);
     res.status(500).json({ error: err.message });
@@ -353,7 +360,12 @@ app.get("/api/users/:id", async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: "User not found." });
     }
-    res.json(rows[0]);
+    res.json({
+      ...rows[0],
+      academicYear: rows[0].startYear
+        ? getCurrentAcademicYear(rows[0].startYear)
+        : rows[0].academicYear,
+    });
   } catch (err) {
     console.error("❌ GET /api/users/:id error:", err.message);
     res.status(500).json({ error: err.message });
@@ -368,7 +380,6 @@ app.post("/api/users/students", async (req, res) => {
     major,
     startYear,
     endYear,
-    academicYear,
     email,
   } = req.body;
 
@@ -408,8 +419,7 @@ app.post("/api/users/students", async (req, res) => {
   )
     .toLowerCase()
     .trim();
-  const selectedAcademicYear =
-    academicYear || getCurrentAcademicYear(parsedStartYear);
+  const selectedAcademicYear = getCurrentAcademicYear(parsedStartYear);
 
   try {
     const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
@@ -622,7 +632,12 @@ app.get("/api/users/:id/profile", async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: "User not found." });
     }
-    res.json(rows[0]);
+    res.json({
+      ...rows[0],
+      academicYear: rows[0].startYear
+        ? getCurrentAcademicYear(rows[0].startYear)
+        : rows[0].academicYear,
+    });
   } catch (err) {
     console.error("❌ GET /api/users/:id/profile error:", err.message);
     res.status(500).json({ error: err.message });
