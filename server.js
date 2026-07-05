@@ -126,16 +126,27 @@ async function ensureTeacherRoleValue() {
 // CONFIGURATION & INITIALIZATION
 // ===================================================================
 
-// Fix: Better API key initialization with error checking
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("❌ ANTHROPIC_API_KEY is missing in .env file");
-  console.error("Please add your Anthropic API key to .env file");
+const anthropicApiKey = process.env.ANTHROPIC_API_KEY?.trim();
+const groqApiKey =
+  process.env.GROQ_API_KEY?.trim() ||
+  (anthropicApiKey?.startsWith("gsk_") ? anthropicApiKey : "");
+const aiProvider = groqApiKey
+  ? "groq"
+  : anthropicApiKey
+    ? "anthropic"
+    : null;
+
+if (!aiProvider) {
+  console.error("AI chat is missing an API key");
+  console.error("Please add GROQ_API_KEY or ANTHROPIC_API_KEY to .env");
 }
 
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || "dummy-key-for-checking",
-});
+const anthropic =
+  aiProvider === "anthropic"
+    ? new Anthropic({
+        apiKey: anthropicApiKey,
+      })
+    : null;
 
 // ===================================================================
 // AI CHAT ENDPOINT
@@ -147,37 +158,73 @@ app.post("/api/chat", async (req, res) => {
     return res.status(400).json({ error: "Messages array is required" });
   }
 
-  // Check if API key is configured
-  if (
-    !process.env.ANTHROPIC_API_KEY ||
-    process.env.ANTHROPIC_API_KEY === "dummy-key-for-checking"
-  ) {
+  if (!aiProvider) {
     return res.status(500).json({
-      error:
-        "AI service is not configured. Please add ANTHROPIC_API_KEY to .env file",
+      error: "AI service is not configured. Please add an AI API key.",
       details: "Missing API key configuration",
     });
   }
 
   try {
-    // Format messages for Claude API
     const formattedMessages = messages.map((msg) => ({
       role: msg.role,
       content: msg.content,
     }));
 
-    // Call Claude API
-    const response = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
-      max_tokens: 1024,
-      system:
-        system ||
-        "You are a helpful AI learning assistant for an e-learning platform.",
-      messages: formattedMessages,
-    });
+    let reply;
 
-    // Extract the text response
-    const reply = response.content[0].text;
+    if (aiProvider === "groq") {
+      const groqResponse = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${groqApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+            max_tokens: req.body.max_tokens || 1024,
+            temperature: 0.7,
+            messages: [
+              {
+                role: "system",
+                content:
+                  system ||
+                  "You are a helpful AI learning assistant for an e-learning platform.",
+              },
+              ...formattedMessages,
+            ],
+          }),
+        },
+      );
+
+      const groqData = await groqResponse.json();
+      if (!groqResponse.ok) {
+        const message =
+          groqData.error?.message || `Groq API error: ${groqResponse.status}`;
+        const err = new Error(message);
+        err.status = groqResponse.status;
+        throw err;
+      }
+
+      reply = groqData.choices?.[0]?.message?.content;
+    } else {
+      const response = await anthropic.messages.create({
+        model: process.env.ANTHROPIC_MODEL || "claude-3-haiku-20240307",
+        max_tokens: req.body.max_tokens || 1024,
+        system:
+          system ||
+          "You are a helpful AI learning assistant for an e-learning platform.",
+        messages: formattedMessages,
+      });
+
+      reply = response.content?.[0]?.text;
+    }
+
+    if (!reply) {
+      throw new Error("AI provider returned an empty response");
+    }
 
     res.json({
       success: true,
@@ -185,24 +232,23 @@ app.post("/api/chat", async (req, res) => {
       content: reply,
     });
   } catch (error) {
-    console.error("❌ Anthropic API error:", error.message);
+    console.error("AI API error:", error.message);
 
-    // Better error handling
     let errorMessage = "Failed to get AI response";
     let statusCode = 500;
 
     if (error.status === 401) {
-      errorMessage = "Invalid Anthropic API key. Please check your .env file.";
+      errorMessage = `Invalid ${aiProvider === "groq" ? "Groq" : "Anthropic"} API key. Please check your .env file.`;
       statusCode = 401;
     } else if (error.status === 429) {
       errorMessage = "Rate limit exceeded. Please try again later.";
       statusCode = 429;
-    } else if (error.status === 500) {
-      errorMessage = "Anthropic service error. Please try again later.";
+    } else if (error.status >= 500) {
+      errorMessage = "AI service error. Please try again later.";
       statusCode = 500;
     } else if (error.message?.includes("API key")) {
       errorMessage =
-        "API key not configured. Please add ANTHROPIC_API_KEY to .env file";
+        "API key not configured. Please add GROQ_API_KEY or ANTHROPIC_API_KEY to .env";
       statusCode = 401;
     }
 
@@ -212,7 +258,6 @@ app.post("/api/chat", async (req, res) => {
     });
   }
 });
-
 // ===================================================================
 // HEALTH CHECK
 // ===================================================================
@@ -1485,14 +1530,10 @@ const server = app.listen(PORT, () => {
   ensureTeacherRoleValue();
   ensureStudentYearColumns();
 
-  // Debug check for API key
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error("❌ WARNING: ANTHROPIC_API_KEY is not set in .env file");
-    console.error(
-      "   AI chat feature will not work until you add your API key",
-    );
+  if (!aiProvider) {
+    console.error("WARNING: AI chat is not configured. Add GROQ_API_KEY or ANTHROPIC_API_KEY.");
   } else {
-    console.log("✅ Anthropic API key is configured");
+    console.log(`AI chat provider configured: ${aiProvider}`);
   }
 });
 
@@ -1510,3 +1551,6 @@ server.on("error", (err) => {
   console.error("❌ Server failed to start:", err.message);
   process.exit(1);
 });
+
+
+
