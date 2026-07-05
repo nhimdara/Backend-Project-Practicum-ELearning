@@ -1,0 +1,2 @@
+❌ Port 5001 is already in use. Stop the running backend first, or set a different PORT in Backend/.env.
+   PowerShell: Get-NetTCPConnection -LocalPort 5001 -State Listen | Select-Object OwningProcess

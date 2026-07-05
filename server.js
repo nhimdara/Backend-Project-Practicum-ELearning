@@ -229,7 +229,7 @@ app.post("/api/chat", async (req, res) => {
     res.json({
       success: true,
       response: reply,
-      content: reply,
+      content: [{ type: "text", text: reply }],
     });
   } catch (error) {
     console.error("AI API error:", error.message);
