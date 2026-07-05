@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
+const fs = require("fs");
+const path = require("path");
 const db = require("./db");
 require("dotenv").config();
 
@@ -8,11 +10,138 @@ require("dotenv").config();
 const Anthropic = require("@anthropic-ai/sdk");
 
 const app = express();
+const UPLOAD_ROOT = path.join(__dirname, "uploads");
+const AVATAR_UPLOAD_DIR = path.join(UPLOAD_ROOT, "avatars");
+const MAX_AVATAR_SIZE_BYTES = 2 * 1024 * 1024;
+const IMAGE_EXTENSIONS = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
+
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "6mb" }));
+app.use("/uploads", express.static(UPLOAD_ROOT));
 
 const ALLOWED_MAJORS = ["ITE", "IT", "Mathematics"];
 const EMAIL_DOMAIN = "elearning.com";
+const EXAM_PASS_SCORE = 70;
+
+const EXAM_BANK = {
+  ITE: {
+    title: "ITE Comprehensive Exam",
+    description: "Information Technology Engineering readiness exam",
+    accentColor: "#2563eb",
+    questions: [
+      {
+        id: "ite-1",
+        question: "Which layer of the OSI model is responsible for routing packets between networks?",
+        options: ["Application", "Transport", "Network", "Data Link"],
+        answer: 2,
+      },
+      {
+        id: "ite-2",
+        question: "What is the main purpose of a database index?",
+        options: ["Encrypt table data", "Speed up data lookup", "Delete duplicate rows", "Create backups"],
+        answer: 1,
+      },
+      {
+        id: "ite-3",
+        question: "In software engineering, what does API stand for?",
+        options: ["Application Programming Interface", "Advanced Program Input", "Applied Protocol Internet", "Application Process Index"],
+        answer: 0,
+      },
+      {
+        id: "ite-4",
+        question: "Which data structure uses FIFO order?",
+        options: ["Stack", "Queue", "Tree", "Graph"],
+        answer: 1,
+      },
+      {
+        id: "ite-5",
+        question: "What does HTTPS add to HTTP?",
+        options: ["Compression", "Encryption through TLS", "Offline caching", "Database access"],
+        answer: 1,
+      },
+    ],
+  },
+  IT: {
+    title: "IT Comprehensive Exam",
+    description: "Information Technology core skills exam",
+    accentColor: "#0891b2",
+    questions: [
+      {
+        id: "it-1",
+        question: "Which command-line tool is commonly used to test network reachability?",
+        options: ["ping", "mkdir", "sort", "rename"],
+        answer: 0,
+      },
+      {
+        id: "it-2",
+        question: "What does SQL mainly help you do?",
+        options: ["Design images", "Query and manage relational data", "Compile JavaScript", "Configure routers only"],
+        answer: 1,
+      },
+      {
+        id: "it-3",
+        question: "Which protocol is commonly used to send email?",
+        options: ["SMTP", "FTP", "SSH", "DNS"],
+        answer: 0,
+      },
+      {
+        id: "it-4",
+        question: "What is two-factor authentication used for?",
+        options: ["Faster downloads", "Extra login security", "Image compression", "Code formatting"],
+        answer: 1,
+      },
+      {
+        id: "it-5",
+        question: "Which cloud concept means adding more servers to handle load?",
+        options: ["Horizontal scaling", "Defragmentation", "Serialization", "Packet sniffing"],
+        answer: 0,
+      },
+    ],
+  },
+  Mathematics: {
+    title: "Mathematics Comprehensive Exam",
+    description: "Mathematics foundation and reasoning exam",
+    accentColor: "#7c3aed",
+    questions: [
+      {
+        id: "math-1",
+        question: "What is the derivative of x^2?",
+        options: ["x", "2x", "x^3", "2"],
+        answer: 1,
+      },
+      {
+        id: "math-2",
+        question: "If A = {1, 2} and B = {2, 3}, what is A union B?",
+        options: ["{2}", "{1, 2, 3}", "{1, 3}", "{}"],
+        answer: 1,
+      },
+      {
+        id: "math-3",
+        question: "What is the determinant of [[1, 0], [0, 1]]?",
+        options: ["0", "1", "2", "-1"],
+        answer: 1,
+      },
+      {
+        id: "math-4",
+        question: "Which number is prime?",
+        options: ["21", "27", "29", "39"],
+        answer: 2,
+      },
+      {
+        id: "math-5",
+        question: "What is the probability of getting heads when flipping a fair coin once?",
+        options: ["0", "1/4", "1/2", "1"],
+        answer: 2,
+      },
+    ],
+  },
+};
 
 function clampAcademicYear(value) {
   const year = Number.parseInt(value, 10);
@@ -120,6 +249,915 @@ async function ensureTeacherRoleValue() {
   } catch (err) {
     console.error("❌ Could not verify teacher role:", err.message);
   }
+}
+
+async function ensureUserProfileColumns() {
+  try {
+    const [columns] = await db.query(
+      `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'users'
+         AND COLUMN_NAME IN (
+           'avatar', 'phone', 'location', 'bio', 'occupation', 'education',
+           'website', 'github', 'linkedin', 'twitter', 'skills', 'languages'
+         )`,
+    );
+    const existing = new Set(columns.map((column) => column.COLUMN_NAME));
+    const alters = [];
+    if (!existing.has("avatar")) alters.push("ADD COLUMN avatar TEXT NULL");
+    if (!existing.has("phone")) alters.push("ADD COLUMN phone VARCHAR(50) NULL");
+    if (!existing.has("location")) alters.push("ADD COLUMN location VARCHAR(255) NULL");
+    if (!existing.has("bio")) alters.push("ADD COLUMN bio TEXT NULL");
+    if (!existing.has("occupation")) alters.push("ADD COLUMN occupation VARCHAR(255) NULL");
+    if (!existing.has("education")) alters.push("ADD COLUMN education VARCHAR(255) NULL");
+    if (!existing.has("website")) alters.push("ADD COLUMN website VARCHAR(255) NULL");
+    if (!existing.has("github")) alters.push("ADD COLUMN github VARCHAR(255) NULL");
+    if (!existing.has("linkedin")) alters.push("ADD COLUMN linkedin VARCHAR(255) NULL");
+    if (!existing.has("twitter")) alters.push("ADD COLUMN twitter VARCHAR(255) NULL");
+    if (!existing.has("skills")) alters.push("ADD COLUMN skills TEXT NULL");
+    if (!existing.has("languages")) alters.push("ADD COLUMN languages TEXT NULL");
+
+    if (alters.length > 0) {
+      await db.query(`ALTER TABLE users ${alters.join(", ")}`);
+      console.log("User profile columns are ready");
+    }
+  } catch (err) {
+    console.error("Could not verify user profile columns:", err.message);
+  }
+}
+
+function parseListField(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item).trim()).filter(Boolean);
+    }
+  } catch {}
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function stringifyListField(value) {
+  return JSON.stringify(parseListField(value));
+}
+
+function ensureAvatarUploadDir() {
+  fs.mkdirSync(AVATAR_UPLOAD_DIR, { recursive: true });
+}
+
+function requestOrigin(req) {
+  return `${req.protocol}://${req.get("host")}`;
+}
+
+function assetUrl(req, value) {
+  if (!value) return "";
+  const url = String(value);
+  if (/^(https?:)?\/\//i.test(url) || url.startsWith("data:")) {
+    return url;
+  }
+  if (!url.startsWith("/")) {
+    return url;
+  }
+  return req ? `${requestOrigin(req)}${url}` : url;
+}
+
+function fallbackAvatar(name) {
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || "User")}&background=6366f1&color=fff&size=128`;
+}
+
+function hasImageSignature(buffer, mimeType) {
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg") {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (mimeType === "image/png") {
+    return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+  if (mimeType === "image/gif") {
+    return buffer.subarray(0, 4).toString("ascii") === "GIF8";
+  }
+  if (mimeType === "image/webp") {
+    return (
+      buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+      buffer.subarray(8, 12).toString("ascii") === "WEBP"
+    );
+  }
+  return false;
+}
+
+function decodeAvatarImage(image) {
+  const match = String(image || "").match(/^data:(image\/(?:jpe?g|png|gif|webp));base64,([a-z0-9+/=\s]+)$/i);
+  if (!match) {
+    const err = new Error("Please upload a JPG, PNG, GIF, or WebP image.");
+    err.status = 400;
+    throw err;
+  }
+
+  const mimeType = match[1].toLowerCase() === "image/jpg" ? "image/jpeg" : match[1].toLowerCase();
+  const extension = IMAGE_EXTENSIONS[mimeType];
+  const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+
+  if (buffer.length === 0 || !extension || !hasImageSignature(buffer, mimeType)) {
+    const err = new Error("The uploaded file is not a valid image.");
+    err.status = 400;
+    throw err;
+  }
+
+  if (buffer.length > MAX_AVATAR_SIZE_BYTES) {
+    const err = new Error("Profile photo must be smaller than 2MB.");
+    err.status = 413;
+    throw err;
+  }
+
+  return { buffer, extension };
+}
+
+function publicUserProfile(row, stats = {}, req = null) {
+  const academicYear = row.startYear
+    ? getCurrentAcademicYear(row.startYear)
+    : row.academicYear || null;
+
+  return {
+    ...row,
+    role: row.role === "student" ? "client" : row.role,
+    dbRole: row.role,
+    academicYear,
+    joinDate: row.joinDate || row.created_at || null,
+    avatar: assetUrl(req, row.avatar) || fallbackAvatar(row.name),
+    occupation:
+      row.occupation ||
+      (row.role === "teacher" ? "Teacher" : row.role === "admin" ? "Administrator" : "Student"),
+    education: row.education || row.major || "",
+    bio: row.bio || "",
+    phone: row.phone || "",
+    location: row.location || "",
+    website: row.website || "",
+    github: row.github || "",
+    linkedin: row.linkedin || "",
+    twitter: row.twitter || "",
+    skills: parseListField(row.skills),
+    languages: parseListField(row.languages),
+    achievements: [
+      row.role === "teacher" ? "Teacher" : row.role === "admin" ? "Admin" : "Learner",
+      ...(stats.certificates > 0 ? ["Certificate Earner"] : []),
+      ...(stats.coursesEnrolled > 0 ? ["Course Explorer"] : []),
+    ],
+    coursesEnrolled: Number(stats.coursesEnrolled || 0),
+    certificates: Number(stats.certificates || 0),
+    progress: Math.round(Number(stats.progress || 0)),
+  };
+}
+
+async function getUserLearningStats(userId) {
+  const [[enrollments]] = await db.query(
+    "SELECT COUNT(*) AS coursesEnrolled FROM enrollments WHERE user_id = ?",
+    [userId],
+  );
+  const [[progress]] = await db.query(
+    `SELECT COALESCE(AVG(lesson_progress), 0) AS progress
+     FROM (
+       SELECT
+         e.lesson_id,
+         CASE
+           WHEN COUNT(v.id) = 0 THEN 0
+           ELSE (SUM(CASE WHEN COALESCE(vp.completed, 0) = 1 THEN 1 ELSE 0 END) / COUNT(v.id)) * 100
+         END AS lesson_progress
+       FROM enrollments e
+       LEFT JOIN videos v ON v.lesson_id = e.lesson_id
+       LEFT JOIN video_progress vp ON vp.video_id = v.id AND vp.user_id = e.user_id
+       WHERE e.user_id = ?
+       GROUP BY e.lesson_id
+     ) progress_rows`,
+    [userId],
+  );
+  const [[certificates]] = await db.query(
+    `SELECT COUNT(*) AS certificates
+     FROM (
+       SELECT e.lesson_id
+       FROM enrollments e
+       JOIN videos v ON v.lesson_id = e.lesson_id
+       LEFT JOIN video_progress vp ON vp.video_id = v.id AND vp.user_id = e.user_id
+       WHERE e.user_id = ?
+       GROUP BY e.lesson_id
+       HAVING COUNT(v.id) > 0
+          AND SUM(CASE WHEN COALESCE(vp.completed, 0) = 1 THEN 1 ELSE 0 END) >= COUNT(v.id)
+     ) completed_lessons`,
+    [userId],
+  );
+
+  return {
+    coursesEnrolled: enrollments.coursesEnrolled || 0,
+    progress: progress.progress || 0,
+    certificates: certificates.certificates || 0,
+  };
+}
+
+async function ensureCertificatesTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS certificates (
+        id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id INT(10) UNSIGNED NOT NULL,
+        lesson_id INT(10) UNSIGNED NULL,
+        title VARCHAR(255) NOT NULL,
+        issuer VARCHAR(255) NOT NULL DEFAULT 'Elearning Academy',
+        description TEXT NULL,
+        credential_id VARCHAR(100) NOT NULL,
+        skills TEXT NULL,
+        grade VARCHAR(50) DEFAULT 'Complete',
+        hours DECIMAL(8,2) DEFAULT 0,
+        accent_color VARCHAR(20) DEFAULT '#6366f1',
+        image TEXT NULL,
+        certificate_type VARCHAR(30) DEFAULT 'lesson',
+        exam_major VARCHAR(50) NULL,
+        score DECIMAL(5,2) NULL,
+        issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expiry_date DATETIME NULL,
+        verified TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_user_lesson (user_id, lesson_id),
+        UNIQUE KEY unique_credential_id (credential_id),
+        INDEX idx_certificates_user_id (user_id)
+      )
+    `);
+
+    const [columns] = await db.query(
+      `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_TYPE
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'certificates'`,
+    );
+    const existing = new Set(columns.map((column) => column.COLUMN_NAME));
+    const alters = [];
+    if (!existing.has("user_id")) alters.push("ADD COLUMN user_id INT NOT NULL");
+    if (!existing.has("lesson_id")) alters.push("ADD COLUMN lesson_id INT NOT NULL");
+    if (!existing.has("title")) alters.push("ADD COLUMN title VARCHAR(255) NOT NULL");
+    if (!existing.has("issuer")) alters.push("ADD COLUMN issuer VARCHAR(255) NOT NULL DEFAULT 'Elearning Academy'");
+    if (!existing.has("description")) alters.push("ADD COLUMN description TEXT NULL");
+    if (!existing.has("credential_id")) alters.push("ADD COLUMN credential_id VARCHAR(100) NOT NULL");
+    if (!existing.has("skills")) alters.push("ADD COLUMN skills TEXT NULL");
+    if (!existing.has("grade")) alters.push("ADD COLUMN grade VARCHAR(50) DEFAULT 'Complete'");
+    if (!existing.has("hours")) alters.push("ADD COLUMN hours DECIMAL(8,2) DEFAULT 0");
+    if (!existing.has("accent_color")) alters.push("ADD COLUMN accent_color VARCHAR(20) DEFAULT '#6366f1'");
+    if (!existing.has("image")) alters.push("ADD COLUMN image TEXT NULL");
+    if (!existing.has("certificate_type")) alters.push("ADD COLUMN certificate_type VARCHAR(30) DEFAULT 'lesson'");
+    if (!existing.has("exam_major")) alters.push("ADD COLUMN exam_major VARCHAR(50) NULL");
+    if (!existing.has("score")) alters.push("ADD COLUMN score DECIMAL(5,2) NULL");
+    if (!existing.has("issued_at")) alters.push("ADD COLUMN issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    if (!existing.has("expiry_date")) alters.push("ADD COLUMN expiry_date DATETIME NULL");
+    if (!existing.has("verified")) alters.push("ADD COLUMN verified TINYINT(1) DEFAULT 1");
+
+    if (alters.length > 0) {
+      await db.query(`ALTER TABLE certificates ${alters.join(", ")}`);
+      console.log("Certificates table is ready");
+    }
+
+    const lessonId = columns.find((column) => column.COLUMN_NAME === "lesson_id");
+    if (lessonId && lessonId.IS_NULLABLE === "NO") {
+      await db.query(`ALTER TABLE certificates MODIFY lesson_id ${lessonId.COLUMN_TYPE || "INT"} NULL`);
+    }
+  } catch (err) {
+    console.error("Could not verify certificates table:", err.message);
+  }
+}
+
+async function ensureExamTables() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS exams (
+        id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        major VARCHAR(50) NOT NULL UNIQUE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NULL,
+        pass_score INT NOT NULL DEFAULT 70,
+        accent_color VARCHAR(20) DEFAULT '#4f46e5',
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS exam_questions (
+        id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        exam_id INT(10) UNSIGNED NOT NULL,
+        created_by INT(10) UNSIGNED NULL,
+        question_key VARCHAR(100) NOT NULL,
+        question_text TEXT NOT NULL,
+        options TEXT NOT NULL,
+        correct_answer INT NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_exam_question_key (exam_id, question_key),
+        INDEX idx_exam_questions_exam_id (exam_id),
+        INDEX idx_exam_questions_created_by (created_by),
+        CONSTRAINT exam_questions_exam_fk
+          FOREIGN KEY (exam_id) REFERENCES exams (id) ON DELETE CASCADE,
+        CONSTRAINT exam_questions_created_by_fk
+          FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+      )
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS exam_attempts (
+        id INT(10) UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id INT(10) UNSIGNED NOT NULL,
+        exam_id INT(10) UNSIGNED NULL,
+        major VARCHAR(50) NOT NULL,
+        score DECIMAL(5,2) NOT NULL,
+        correct_count INT NOT NULL,
+        total_questions INT NOT NULL,
+        passed TINYINT(1) DEFAULT 0,
+        answers TEXT NULL,
+        details TEXT NULL,
+        submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_exam_attempts_user_id (user_id),
+        INDEX idx_exam_attempts_exam_id (exam_id),
+        INDEX idx_exam_attempts_major (major),
+        CONSTRAINT exam_attempts_user_fk
+          FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+        CONSTRAINT exam_attempts_exam_fk
+          FOREIGN KEY (exam_id) REFERENCES exams (id) ON DELETE SET NULL
+      )
+    `);
+
+    const [columns] = await db.query(
+      `SELECT COLUMN_NAME
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'exam_questions'`,
+    );
+    const existing = new Set(columns.map((column) => column.COLUMN_NAME));
+    if (!existing.has("created_by")) {
+      await db.query("ALTER TABLE exam_questions ADD COLUMN created_by INT(10) UNSIGNED NULL AFTER exam_id");
+      await db.query("ALTER TABLE exam_questions ADD INDEX idx_exam_questions_created_by (created_by)");
+    }
+  } catch (err) {
+    console.error("Could not verify exam tables:", err.message);
+  }
+}
+
+const parseJsonField = (value, fallback) => {
+  if (!value) return fallback;
+  try {
+    return typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    return fallback;
+  }
+};
+
+async function getActorRole(req) {
+  const rawRole = String(req.headers["x-user-role"] || req.body?.actorRole || "").trim();
+  const normalizedHeaderRole = rawRole === "client" ? "student" : rawRole.toLowerCase();
+  const rawUserId = req.headers["x-user-id"] || req.body?.actorUserId || req.body?.actorId;
+  const userId = Number(rawUserId);
+
+  if (Number.isInteger(userId) && userId > 0) {
+    const [rows] = await db.query("SELECT id, role FROM users WHERE id = ? LIMIT 1", [userId]);
+    if (rows.length > 0) {
+      return {
+        role: rows[0].role === "client" ? "student" : rows[0].role,
+        userId: rows[0].id,
+      };
+    }
+  }
+
+  if (["admin", "teacher"].includes(normalizedHeaderRole)) {
+    return { role: normalizedHeaderRole, userId: null };
+  }
+
+  return null;
+}
+
+async function requireExamQuestionManager(req, res) {
+  const actor = await getActorRole(req);
+  if (!actor || !["teacher", "admin"].includes(actor.role)) {
+    res.status(403).json({ error: "Only teachers and admins can manage exam questions." });
+    return null;
+  }
+  return actor;
+}
+
+function normalizeExamQuestionPayload(body) {
+  const questionText = String(body?.questionText || body?.question || "").trim();
+  const options = Array.isArray(body?.options)
+    ? body.options.map((option) => String(option || "").trim()).filter(Boolean)
+    : [];
+  const correctAnswer = Number(body?.correctAnswer ?? body?.answer);
+  const questionKey = String(body?.questionKey || body?.id || "").trim();
+  const sortOrder = Number(body?.sortOrder);
+
+  if (questionText.length < 5) {
+    return { error: "Question text must be at least 5 characters." };
+  }
+
+  if (options.length < 2) {
+    return { error: "Please provide at least two answer options." };
+  }
+
+  if (!Number.isInteger(correctAnswer) || correctAnswer < 0 || correctAnswer >= options.length) {
+    return { error: "Correct answer must be a valid option index." };
+  }
+
+  return {
+    questionKey,
+    questionText,
+    options,
+    correctAnswer,
+    sortOrder: Number.isInteger(sortOrder) && sortOrder > 0 ? sortOrder : null,
+  };
+}
+
+async function getCompletedCertificateRows(userId) {
+  const [rows] = await db.query(
+    `SELECT
+       l.id AS lesson_id,
+       l.title,
+       l.description,
+       l.major,
+       l.credit,
+       l.color,
+       c.name AS category,
+       e.enrolled_at,
+       MAX(vp.last_watched) AS completed_at,
+       COUNT(v.id) AS total_videos,
+       SUM(CASE WHEN COALESCE(vp.completed, 0) = 1 THEN 1 ELSE 0 END) AS completed_videos
+     FROM enrollments e
+     JOIN lessons l ON l.id = e.lesson_id
+     LEFT JOIN categories c ON c.id = l.category_id
+     JOIN videos v ON v.lesson_id = l.id
+     LEFT JOIN video_progress vp ON vp.video_id = v.id AND vp.user_id = e.user_id
+     WHERE e.user_id = ?
+     GROUP BY l.id, l.title, l.description, l.major, l.credit, l.color, c.name, e.enrolled_at
+     HAVING total_videos > 0 AND completed_videos >= total_videos
+     ORDER BY completed_at DESC, e.enrolled_at DESC`,
+    [userId],
+  );
+
+  return rows;
+}
+
+async function syncCompletedCertificates(userId) {
+  const completedRows = await getCompletedCertificateRows(userId);
+
+  for (const row of completedRows) {
+    const credentialId = `EL-${userId}-${row.lesson_id}`;
+    const skills = stringifyListField([row.major, row.category].filter(Boolean));
+    const issuedAt = row.completed_at || row.enrolled_at || new Date();
+    const hours = Number(row.credit || row.total_videos || 0);
+    const values = [
+      userId,
+      row.lesson_id,
+      row.title,
+      "Elearning Academy",
+      row.description || "",
+      credentialId,
+      skills,
+      "Complete",
+      hours,
+      row.color || "#6366f1",
+      issuedAt,
+      1,
+    ];
+
+    const [existing] = await db.query(
+      "SELECT id FROM certificates WHERE user_id = ? AND lesson_id = ? LIMIT 1",
+      [userId, row.lesson_id],
+    );
+
+    if (existing.length > 0) {
+      await db.query(
+        `UPDATE certificates SET
+           title = ?,
+           issuer = ?,
+           description = ?,
+           credential_id = ?,
+           skills = ?,
+           grade = ?,
+           hours = ?,
+           accent_color = ?,
+           issued_at = COALESCE(issued_at, ?),
+           verified = ?
+         WHERE id = ?`,
+        [...values.slice(2), existing[0].id],
+      );
+    } else {
+      await db.query(
+        `INSERT INTO certificates
+         (user_id, lesson_id, title, issuer, description, credential_id, skills, grade, hours, accent_color, issued_at, verified)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        values,
+      );
+    }
+  }
+}
+
+function mapCertificateRow(row, req = null) {
+  return {
+    id: row.id,
+    lessonId: row.lesson_id,
+    userId: row.user_id,
+    studentName: row.student_name || row.name || null,
+    studentEmail: row.student_email || row.email || null,
+    studentMajor: row.student_major || row.major || null,
+    title: row.title,
+    issuer: row.issuer || "Elearning Academy",
+    issueDate: row.issued_at,
+    expiryDate: row.expiry_date,
+    credentialId: row.credential_id,
+    skills: parseListField(row.skills),
+    grade: row.grade || "Complete",
+    hours: Number(row.hours || 0),
+    verified: Boolean(row.verified),
+    accentColor: row.accent_color || "#6366f1",
+    image: assetUrl(req, row.image),
+    description: row.description || "",
+    type: row.certificate_type || "lesson",
+    examMajor: row.exam_major || null,
+    score: row.score === undefined || row.score === null ? null : Number(row.score),
+  };
+}
+
+function normalizeExamMajor(value) {
+  const major = String(value || "").trim();
+  return ALLOWED_MAJORS.includes(major) ? major : "";
+}
+
+async function getExamDefinition(major) {
+  try {
+    await ensureExamTables();
+    const [exams] = await db.query(
+      `SELECT id, major, title, description, pass_score, accent_color
+       FROM exams
+       WHERE major = ? AND is_active = 1
+       LIMIT 1`,
+      [major],
+    );
+
+    if (exams.length > 0) {
+      const [questions] = await db.query(
+        `SELECT question_key, question_text, options, correct_answer
+         FROM exam_questions
+         WHERE exam_id = ? AND is_active = 1
+         ORDER BY sort_order ASC, id ASC`,
+        [exams[0].id],
+      );
+
+      if (questions.length > 0) {
+        return {
+          id: exams[0].id,
+          major,
+          title: exams[0].title,
+          description: exams[0].description || `${major} certification exam`,
+          passScore: Number(exams[0].pass_score || EXAM_PASS_SCORE),
+          accentColor: exams[0].accent_color || "#4f46e5",
+          questions: questions.map((question) => ({
+            id: question.question_key,
+            question: question.question_text,
+            options: parseJsonField(question.options, []),
+            answer: Number(question.correct_answer),
+          })),
+        };
+      }
+    }
+  } catch (err) {
+    console.error("Could not load exam from database:", err.message);
+  }
+
+  const fallback = EXAM_BANK[major];
+  if (!fallback) return null;
+  return {
+    ...fallback,
+    id: null,
+    passScore: EXAM_PASS_SCORE,
+  };
+}
+
+async function publicExam(major) {
+  const exam = await getExamDefinition(major);
+  if (!exam) return null;
+  return {
+    major,
+    title: exam.title,
+    description: exam.description,
+    passScore: exam.passScore || EXAM_PASS_SCORE,
+    totalQuestions: exam.questions.length,
+    questions: exam.questions.map(({ id, question, options }) => ({
+      id,
+      question,
+      options,
+    })),
+  };
+}
+
+async function awardExamCertificate(userId, major, score) {
+  const exam = await getExamDefinition(major);
+  if (!exam) return null;
+  const credentialId = `EL-EXAM-${userId}-${major.toUpperCase().replace(/[^A-Z0-9]+/g, "-")}`;
+  const skills = stringifyListField([major, "Comprehensive Exam", "Certificate"]);
+  const [existing] = await db.query(
+    `SELECT id FROM certificates
+     WHERE user_id = ?
+       AND certificate_type = 'exam'
+       AND exam_major = ?
+     LIMIT 1`,
+    [userId, major],
+  );
+
+  if (existing.length > 0) {
+    await db.query(
+      `UPDATE certificates SET
+         lesson_id = NULL,
+         title = ?,
+         issuer = ?,
+         description = ?,
+         credential_id = ?,
+         skills = ?,
+         grade = ?,
+         hours = ?,
+         accent_color = ?,
+         certificate_type = 'exam',
+         exam_major = ?,
+         score = ?,
+         verified = 1
+       WHERE id = ?`,
+      [
+        exam.title,
+        "Elearning Academy",
+        exam.description,
+        credentialId,
+        skills,
+        `${score}%`,
+        0,
+        exam.accentColor,
+        major,
+        score,
+        existing[0].id,
+      ],
+    );
+  } else {
+    await db.query(
+      `INSERT INTO certificates
+       (user_id, lesson_id, title, issuer, description, credential_id, skills,
+        grade, hours, accent_color, certificate_type, exam_major, score, verified)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'exam', ?, ?, 1)`,
+      [
+        userId,
+        exam.title,
+        "Elearning Academy",
+        exam.description,
+        credentialId,
+        skills,
+        `${score}%`,
+        0,
+        exam.accentColor,
+        major,
+        score,
+      ],
+    );
+  }
+
+  const [rows] = await db.query(
+    `SELECT id, user_id, lesson_id, title, issuer, description,
+            credential_id, skills, grade, hours, accent_color, image,
+            certificate_type, exam_major, score, issued_at, expiry_date, verified
+     FROM certificates
+     WHERE credential_id = ?
+     LIMIT 1`,
+    [credentialId],
+  );
+
+  return rows[0] || null;
+}
+
+async function awardManualCertificate(userId, major, title) {
+  const cleanMajor = normalizeExamMajor(major);
+  if (!cleanMajor) {
+    const err = new Error("A valid major is required.");
+    err.status = 400;
+    throw err;
+  }
+
+  const certificateTitle =
+    String(title || "").trim() || `${cleanMajor} Achievement Certificate`;
+  const credentialId = `EL-MANUAL-${userId}-${cleanMajor.toUpperCase().replace(/[^A-Z0-9]+/g, "-")}`;
+  const skills = stringifyListField([cleanMajor, "Academic Achievement", "Admin Issued"]);
+  const accentColor =
+    cleanMajor === "Mathematics" ? "#7c3aed" : cleanMajor === "IT" ? "#0891b2" : "#2563eb";
+
+  const [existing] = await db.query(
+    `SELECT id FROM certificates
+     WHERE user_id = ?
+       AND certificate_type = 'manual'
+       AND exam_major = ?
+     LIMIT 1`,
+    [userId, cleanMajor],
+  );
+
+  if (existing.length > 0) {
+    await db.query(
+      `UPDATE certificates SET
+         lesson_id = NULL,
+         title = ?,
+         issuer = ?,
+         description = ?,
+         credential_id = ?,
+         skills = ?,
+         grade = ?,
+         hours = ?,
+         accent_color = ?,
+         certificate_type = 'manual',
+         exam_major = ?,
+         verified = 1,
+         issued_at = NOW()
+       WHERE id = ?`,
+      [
+        certificateTitle,
+        "Elearning Academy",
+        `Admin-issued certificate for ${cleanMajor}.`,
+        credentialId,
+        skills,
+        "Complete",
+        0,
+        accentColor,
+        cleanMajor,
+        existing[0].id,
+      ],
+    );
+  } else {
+    await db.query(
+      `INSERT INTO certificates
+       (user_id, lesson_id, title, issuer, description, credential_id, skills,
+        grade, hours, accent_color, certificate_type, exam_major, verified)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, 1)`,
+      [
+        userId,
+        certificateTitle,
+        "Elearning Academy",
+        `Admin-issued certificate for ${cleanMajor}.`,
+        credentialId,
+        skills,
+        "Complete",
+        0,
+        accentColor,
+        cleanMajor,
+      ],
+    );
+  }
+
+  const [rows] = await db.query(
+    `SELECT cert.id, cert.user_id, cert.lesson_id, cert.title, cert.issuer,
+            cert.description, cert.credential_id, cert.skills, cert.grade,
+            cert.hours, cert.accent_color, cert.image, cert.certificate_type,
+            cert.exam_major, cert.score, cert.issued_at, cert.expiry_date,
+            cert.verified,
+            u.name AS student_name,
+            u.email AS student_email,
+            u.major AS student_major
+     FROM certificates cert
+     LEFT JOIN users u ON u.id = cert.user_id
+     WHERE cert.credential_id = ?
+     LIMIT 1`,
+    [credentialId],
+  );
+
+  return rows[0] || null;
+}
+
+let projectColumnCache = null;
+
+function normalizeProjectTags(tags) {
+  if (Array.isArray(tags)) {
+    return tags.map((tag) => String(tag).trim()).filter(Boolean).join(", ");
+  }
+
+  return String(tags || "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function toTinyInt(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue ? 1 : 0;
+  }
+  if (value === true || value === 1 || value === "1" || value === "true") {
+    return 1;
+  }
+  return 0;
+}
+
+function mapProjectRow(project) {
+  return {
+    ...project,
+    image: project.image || project.image_url || "",
+    github_url: project.github_url || project.github || "",
+    live_url: project.live_url || project.demo_url || "",
+    tags: project.tags
+      ? project.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+      : [],
+    featured: Boolean(project.featured),
+    is_active:
+      project.is_active === undefined ? true : Boolean(project.is_active),
+  };
+}
+
+async function getProjectColumns() {
+  if (projectColumnCache) return projectColumnCache;
+
+  const [columns] = await db.query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'projects'`,
+  );
+
+  projectColumnCache = new Set(columns.map((column) => column.COLUMN_NAME));
+  return projectColumnCache;
+}
+
+async function ensureProjectColumns() {
+  try {
+    const [tables] = await db.query(
+      `SELECT TABLE_NAME
+       FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'projects'`,
+    );
+
+    if (tables.length === 0) {
+      await db.query(`
+        CREATE TABLE projects (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          description TEXT NULL,
+          image TEXT NULL,
+          tags TEXT NULL,
+          github_url VARCHAR(500) NULL,
+          live_url VARCHAR(500) NULL,
+          featured TINYINT(1) DEFAULT 0,
+          is_active TINYINT(1) DEFAULT 1,
+          view_count INT DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `);
+      projectColumnCache = null;
+      console.log("Projects table is ready");
+      return;
+    }
+
+    const columns = await getProjectColumns();
+    const alters = [];
+    if (!columns.has("description")) alters.push("ADD COLUMN description TEXT NULL");
+    if (!columns.has("image")) alters.push("ADD COLUMN image TEXT NULL");
+    if (!columns.has("tags")) alters.push("ADD COLUMN tags TEXT NULL");
+    if (!columns.has("github_url")) alters.push("ADD COLUMN github_url VARCHAR(500) NULL");
+    if (!columns.has("live_url")) alters.push("ADD COLUMN live_url VARCHAR(500) NULL");
+    if (!columns.has("featured")) alters.push("ADD COLUMN featured TINYINT(1) DEFAULT 0");
+    if (!columns.has("is_active")) alters.push("ADD COLUMN is_active TINYINT(1) DEFAULT 1");
+    if (!columns.has("view_count")) alters.push("ADD COLUMN view_count INT DEFAULT 0");
+
+    if (alters.length > 0) {
+      await db.query(`ALTER TABLE projects ${alters.join(", ")}`);
+      projectColumnCache = null;
+      console.log("Project management columns are ready");
+    }
+  } catch (err) {
+    console.error("Could not verify projects table:", err.message);
+  }
+}
+
+function getProjectPayload(body, columns) {
+  const image = body.image ?? body.image_url;
+  const githubUrl = body.github_url ?? body.github;
+  const liveUrl = body.live_url ?? body.demo_url;
+  const values = {
+    title: String(body.title || "").trim(),
+    description: body.description ? String(body.description).trim() : null,
+    image: image ? String(image).trim() : null,
+    image_url: image ? String(image).trim() : null,
+    tags: normalizeProjectTags(body.tags),
+    github_url: githubUrl ? String(githubUrl).trim() : null,
+    live_url: liveUrl ? String(liveUrl).trim() : null,
+    demo_url: liveUrl ? String(liveUrl).trim() : null,
+    featured: toTinyInt(body.featured),
+    is_active: toTinyInt(body.is_active, true),
+  };
+
+  return Object.fromEntries(
+    Object.entries(values).filter(([key]) => columns.has(key)),
+  );
 }
 
 // ===================================================================
@@ -344,7 +1382,7 @@ app.post("/api/login", async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT id, name, email, password_hash, role, major,
-              start_year, end_year, academic_year
+              start_year, end_year, academic_year, avatar
        FROM users WHERE email = ?`,
       [normalizedEmail],
     );
@@ -373,6 +1411,7 @@ app.post("/api/login", async (req, res) => {
         email: user.email,
         role: user.role,
         major: user.major || null,
+        avatar: assetUrl(req, user.avatar) || fallbackAvatar(user.name),
         startYear: user.start_year || null,
         endYear: user.end_year || null,
         academicYear: user.start_year
@@ -421,23 +1460,24 @@ app.get("/api/users", async (req, res) => {
 // GET user by ID (for session restore)
 app.get("/api/users/:id", async (req, res) => {
   try {
+    await ensureUserProfileColumns();
     const [rows] = await db.query(
       `SELECT id, name, email, role, major,
               start_year AS startYear,
               end_year AS endYear,
-              academic_year AS academicYear
+              academic_year AS academicYear,
+              created_at AS joinDate,
+              last_login,
+              avatar, phone, location, bio, occupation, education,
+              website, github, linkedin, twitter, skills, languages
        FROM users WHERE id = ?`,
       [req.params.id],
     );
     if (rows.length === 0) {
       return res.status(404).json({ error: "User not found." });
     }
-    res.json({
-      ...rows[0],
-      academicYear: rows[0].startYear
-        ? getCurrentAcademicYear(rows[0].startYear)
-        : rows[0].academicYear,
-    });
+    const stats = await getUserLearningStats(req.params.id);
+    res.json(publicUserProfile(rows[0], stats, req));
   } catch (err) {
     console.error("❌ GET /api/users/:id error:", err.message);
     res.status(500).json({ error: err.message });
@@ -692,27 +1732,442 @@ app.put("/api/users/:id/major", async (req, res) => {
 // GET user profile
 app.get("/api/users/:id/profile", async (req, res) => {
   try {
+    await ensureUserProfileColumns();
     const [rows] = await db.query(
       `SELECT id, name, email, role, major,
               start_year AS startYear,
               end_year AS endYear,
               academic_year AS academicYear,
-              created_at, last_login
+              created_at AS joinDate,
+              last_login,
+              avatar, phone, location, bio, occupation, education,
+              website, github, linkedin, twitter, skills, languages
        FROM users WHERE id = ?`,
       [req.params.id],
     );
     if (rows.length === 0) {
       return res.status(404).json({ error: "User not found." });
     }
-    res.json({
-      ...rows[0],
-      academicYear: rows[0].startYear
-        ? getCurrentAcademicYear(rows[0].startYear)
-        : rows[0].academicYear,
-    });
+    const stats = await getUserLearningStats(req.params.id);
+    res.json(publicUserProfile(rows[0], stats, req));
   } catch (err) {
     console.error("❌ GET /api/users/:id/profile error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// UPDATE user profile
+app.put("/api/users/:id/profile", async (req, res) => {
+  const allowed = [
+    "name",
+    "email",
+    "avatar",
+    "phone",
+    "location",
+    "bio",
+    "occupation",
+    "education",
+    "website",
+    "github",
+    "linkedin",
+    "twitter",
+    "skills",
+    "languages",
+  ];
+  const payload = {};
+
+  for (const field of allowed) {
+    if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+      payload[field] = ["skills", "languages"].includes(field)
+        ? stringifyListField(req.body[field])
+        : String(req.body[field] || "").trim() || null;
+    }
+  }
+
+  if (payload.name !== undefined && (!payload.name || payload.name.length < 2)) {
+    return res.status(400).json({ error: "Name must be at least 2 characters." });
+  }
+  if (payload.email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    payload.email = payload.email.toLowerCase();
+    if (!emailRegex.test(payload.email)) {
+      return res.status(400).json({ error: "Please enter a valid email address." });
+    }
+  }
+
+  try {
+    await ensureUserProfileColumns();
+    if (payload.email) {
+      const [existing] = await db.query(
+        "SELECT id FROM users WHERE email = ? AND id <> ?",
+        [payload.email, req.params.id],
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ error: "That email is already in use." });
+      }
+    }
+
+    const fields = Object.keys(payload);
+    if (fields.length > 0) {
+      const assignments = fields.map((field) => `\`${field}\` = ?`).join(", ");
+      const values = fields.map((field) => payload[field]);
+      const [result] = await db.query(
+        `UPDATE users SET ${assignments} WHERE id = ?`,
+        [...values, req.params.id],
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: "User not found." });
+      }
+    }
+
+    const [rows] = await db.query(
+      `SELECT id, name, email, role, major,
+              start_year AS startYear,
+              end_year AS endYear,
+              academic_year AS academicYear,
+              created_at AS joinDate,
+              last_login,
+              avatar, phone, location, bio, occupation, education,
+              website, github, linkedin, twitter, skills, languages
+       FROM users WHERE id = ?`,
+      [req.params.id],
+    );
+    const stats = await getUserLearningStats(req.params.id);
+    res.json({ success: true, user: publicUserProfile(rows[0], stats, req) });
+  } catch (err) {
+    console.error("âŒ PUT /api/users/:id/profile error:", err.message);
+    res.status(500).json({ error: "Failed to update profile." });
+  }
+});
+
+// UPDATE user profile photo
+app.post("/api/users/:id/avatar", async (req, res) => {
+  try {
+    await ensureUserProfileColumns();
+    const { buffer, extension } = decodeAvatarImage(req.body?.image);
+    ensureAvatarUploadDir();
+
+    const safeUserId = String(req.params.id).replace(/[^a-z0-9_-]/gi, "");
+    const filename = `user-${safeUserId}-${Date.now()}.${extension}`;
+    const diskPath = path.join(AVATAR_UPLOAD_DIR, filename);
+    const savedPath = `/uploads/avatars/${filename}`;
+
+    await fs.promises.writeFile(diskPath, buffer);
+
+    const [result] = await db.query("UPDATE users SET avatar = ? WHERE id = ?", [
+      savedPath,
+      req.params.id,
+    ]);
+
+    if (result.affectedRows === 0) {
+      await fs.promises.unlink(diskPath).catch(() => {});
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const [rows] = await db.query(
+      `SELECT id, name, email, role, major,
+              start_year AS startYear,
+              end_year AS endYear,
+              academic_year AS academicYear,
+              created_at AS joinDate,
+              last_login,
+              avatar, phone, location, bio, occupation, education,
+              website, github, linkedin, twitter, skills, languages
+       FROM users WHERE id = ?`,
+      [req.params.id],
+    );
+    const stats = await getUserLearningStats(req.params.id);
+    const user = publicUserProfile(rows[0], stats, req);
+
+    res.json({
+      success: true,
+      avatar: user.avatar,
+      user,
+    });
+  } catch (err) {
+    console.error("Could not update avatar:", err.message);
+    res.status(err.status || 500).json({
+      error: err.status ? err.message : "Failed to update profile photo.",
+    });
+  }
+});
+
+// GET major-specific student exam
+app.get("/api/exams/by-major/:major", async (req, res) => {
+  const major = normalizeExamMajor(req.params.major);
+  const exam = await publicExam(major);
+
+  if (!exam) {
+    return res.status(404).json({ error: "Exam is not available for this major." });
+  }
+
+  res.json(exam);
+});
+
+// ADD a student exam question (teachers and admins only)
+app.post("/api/exams/by-major/:major/questions", async (req, res) => {
+  const actor = await requireExamQuestionManager(req, res);
+  if (!actor) return;
+
+  const major = normalizeExamMajor(req.params.major || req.body?.major);
+  if (!major) {
+    return res.status(400).json({ error: "A valid major is required." });
+  }
+
+  const payload = normalizeExamQuestionPayload(req.body);
+  if (payload.error) {
+    return res.status(400).json({ error: payload.error });
+  }
+
+  try {
+    await ensureExamTables();
+
+    await db.query(
+      `INSERT INTO exams (major, title, description, pass_score, accent_color, is_active)
+       VALUES (?, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE is_active = 1`,
+      [
+        major,
+        `${major} Certification Exam`,
+        `${major} certification exam`,
+        EXAM_PASS_SCORE,
+        EXAM_BANK[major]?.accentColor || "#4f46e5",
+      ],
+    );
+
+    const [[exam]] = await db.query("SELECT id FROM exams WHERE major = ? LIMIT 1", [major]);
+    if (!exam) {
+      return res.status(500).json({ error: "Could not prepare exam." });
+    }
+
+    const [[orderRow]] = await db.query(
+      "SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort_order FROM exam_questions WHERE exam_id = ?",
+      [exam.id],
+    );
+    const sortOrder = payload.sortOrder || Number(orderRow.next_sort_order || 1);
+    const questionKey = payload.questionKey || `${major.toLowerCase()}-${Date.now()}`;
+
+    await db.query(
+      `INSERT INTO exam_questions
+       (exam_id, created_by, question_key, question_text, options, correct_answer, sort_order, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         created_by = VALUES(created_by),
+         question_text = VALUES(question_text),
+         options = VALUES(options),
+         correct_answer = VALUES(correct_answer),
+         sort_order = VALUES(sort_order),
+         is_active = 1`,
+      [
+        exam.id,
+        actor.userId,
+        questionKey,
+        payload.questionText,
+        JSON.stringify(payload.options),
+        payload.correctAnswer,
+        sortOrder,
+      ],
+    );
+
+    res.status(201).json({
+      success: true,
+      major,
+      question: {
+        id: questionKey,
+        question: payload.questionText,
+        options: payload.options,
+        correctAnswer: payload.correctAnswer,
+        sortOrder,
+      },
+    });
+  } catch (err) {
+    console.error("Could not add exam question:", err.message);
+    res.status(500).json({ error: "Failed to add exam question." });
+  }
+});
+
+// SUBMIT student exam and award a certificate on pass
+app.post("/api/users/:id/exam-attempts", async (req, res) => {
+  const major = normalizeExamMajor(req.body?.major);
+  const answers = req.body?.answers || {};
+
+  const exam = await getExamDefinition(major);
+  if (!exam) {
+    return res.status(400).json({ error: "A valid major is required." });
+  }
+
+  try {
+    await ensureCertificatesTable();
+    await ensureExamTables();
+    const [users] = await db.query("SELECT id, major FROM users WHERE id = ?", [
+      req.params.id,
+    ]);
+
+    if (users.length === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    if (users[0].major && users[0].major !== major) {
+      return res.status(403).json({ error: "This exam does not match the student's major." });
+    }
+
+    const details = exam.questions.map((question) => {
+      const selected = Number(answers[question.id]);
+      return {
+        id: question.id,
+        correct: selected === question.answer,
+        selected: Number.isNaN(selected) ? null : selected,
+        answer: question.answer,
+      };
+    });
+    const correct = details.filter((item) => item.correct).length;
+    const score = Math.round((correct / exam.questions.length) * 100);
+    const passScore = Number(exam.passScore || EXAM_PASS_SCORE);
+    const passed = score >= passScore;
+    let certificate = null;
+
+    await db.query(
+      `INSERT INTO exam_attempts
+       (user_id, exam_id, major, score, correct_count, total_questions, passed, answers, details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.params.id,
+        exam.id || null,
+        major,
+        score,
+        correct,
+        exam.questions.length,
+        passed ? 1 : 0,
+        JSON.stringify(answers),
+        JSON.stringify(details),
+      ],
+    );
+
+    if (passed) {
+      const row = await awardExamCertificate(req.params.id, major, score);
+      certificate = row ? mapCertificateRow(row, req) : null;
+    }
+
+    res.json({
+      success: true,
+      major,
+      score,
+      correct,
+      total: exam.questions.length,
+      passScore,
+      passed,
+      certificate,
+      details,
+    });
+  } catch (err) {
+    console.error("Could not submit exam:", err.message);
+    res.status(500).json({ error: "Failed to submit exam." });
+  }
+});
+
+// GET all certificates for admin review/printing
+app.get("/api/certificates", async (req, res) => {
+  try {
+    await ensureCertificatesTable();
+    const [rows] = await db.query(
+      `SELECT cert.id, cert.user_id, cert.lesson_id, cert.title, cert.issuer,
+              cert.description, cert.credential_id, cert.skills, cert.grade,
+              cert.hours, cert.accent_color, cert.image, cert.certificate_type,
+              cert.exam_major, cert.score, cert.issued_at, cert.expiry_date,
+              cert.verified,
+              u.name AS student_name,
+              u.email AS student_email,
+              u.major AS student_major
+       FROM certificates cert
+       LEFT JOIN users u ON u.id = cert.user_id
+       ORDER BY cert.issued_at DESC, cert.id DESC`,
+    );
+
+    res.json(rows.map((row) => mapCertificateRow(row, req)));
+  } catch (err) {
+    console.error("Could not load certificates:", err.message);
+    res.status(500).json({ error: "Failed to load certificates." });
+  }
+});
+
+// DELETE a certificate from the admin certificate list
+app.delete("/api/certificates/:id", async (req, res) => {
+  try {
+    await ensureCertificatesTable();
+    const [result] = await db.query("DELETE FROM certificates WHERE id = ?", [req.params.id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Certificate not found." });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Could not delete certificate:", err.message);
+    res.status(500).json({ error: "Failed to delete certificate." });
+  }
+});
+
+// GENERATE a certificate for a student by major
+app.post("/api/certificates", async (req, res) => {
+  const userId = req.body?.userId;
+  const major = normalizeExamMajor(req.body?.major);
+  const title = req.body?.title;
+
+  if (!userId) {
+    return res.status(400).json({ error: "Student is required." });
+  }
+  if (!major) {
+    return res.status(400).json({ error: "A valid major is required." });
+  }
+
+  try {
+    await ensureCertificatesTable();
+    const [users] = await db.query(
+      "SELECT id, name, email, major FROM users WHERE id = ? AND role = 'student'",
+      [userId],
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    if (users[0].major && users[0].major !== major) {
+      return res.status(400).json({ error: "Certificate major must match the student major." });
+    }
+
+    const certificate = await awardManualCertificate(userId, major, title);
+    res.status(201).json({
+      success: true,
+      certificate: certificate ? mapCertificateRow(certificate, req) : null,
+    });
+  } catch (err) {
+    console.error("Could not generate certificate:", err.message);
+    res.status(err.status || 500).json({
+      error: err.status ? err.message : "Failed to generate certificate.",
+    });
+  }
+});
+
+// GET certificates earned from completed enrolled lessons
+app.get("/api/users/:id/certificates", async (req, res) => {
+  try {
+    await ensureCertificatesTable();
+    await syncCompletedCertificates(req.params.id);
+
+    const [rows] = await db.query(
+      `SELECT id, user_id, lesson_id, title, issuer, description,
+              credential_id, skills, grade, hours, accent_color, image,
+              certificate_type, exam_major, score, issued_at, expiry_date, verified
+       FROM certificates
+       WHERE user_id = ?
+       ORDER BY issued_at DESC, id DESC`,
+      [req.params.id],
+    );
+
+    res.json(rows.map((row) => mapCertificateRow(row, req)));
+  } catch (err) {
+    console.error("âŒ GET /api/users/:id/certificates error:", err.message);
+    res.status(500).json({ error: "Failed to load certificates." });
   }
 });
 
@@ -1359,19 +2814,57 @@ app.get("/api/users/:user_id/lessons/:lesson_id/progress", async (req, res) => {
 // GET all projects
 app.get("/api/projects", async (req, res) => {
   try {
+    const columns = await getProjectColumns();
+    const includeInactive = req.query.include_inactive === "1";
+    const where =
+      columns.has("is_active") && !includeInactive ? " WHERE is_active = 1" : "";
+    const order = `${columns.has("featured") ? "featured DESC, " : ""}id DESC`;
     const [rows] = await db.query(
-      "SELECT * FROM projects WHERE is_active = 1 ORDER BY featured DESC, id DESC",
+      `SELECT * FROM projects${where} ORDER BY ${order}`,
     );
 
-    const projects = rows.map((project) => ({
-      ...project,
-      tags: project.tags ? project.tags.split(", ") : [],
-    }));
-
-    res.json(projects);
+    res.json(rows.map(mapProjectRow));
   } catch (err) {
     console.error("❌ /api/projects error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// CREATE a project
+app.post("/api/projects", async (req, res) => {
+  const title = String(req.body.title || "").trim();
+  if (title.length < 3) {
+    return res
+      .status(400)
+      .json({ error: "Project title must be at least 3 characters." });
+  }
+
+  try {
+    const columns = await getProjectColumns();
+    const payload = getProjectPayload(req.body, columns);
+    if (!columns.has("title")) {
+      return res.status(500).json({ error: "Projects table is missing title." });
+    }
+
+    const keys = Object.keys(payload);
+    const placeholders = keys.map(() => "?").join(", ");
+    const columnSql = keys.map((key) => `\`${key}\``).join(", ");
+    const values = keys.map((key) => payload[key]);
+    const [result] = await db.query(
+      `INSERT INTO projects (${columnSql}) VALUES (${placeholders})`,
+      values,
+    );
+    const [rows] = await db.query("SELECT * FROM projects WHERE id = ?", [
+      result.insertId,
+    ]);
+
+    res.status(201).json({
+      success: true,
+      project: rows[0] ? mapProjectRow(rows[0]) : null,
+    });
+  } catch (err) {
+    console.error("âŒ POST /api/projects error:", err.message);
+    res.status(500).json({ error: "Failed to create project." });
   }
 });
 
@@ -1384,15 +2877,74 @@ app.get("/api/projects/:id", async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: "Project not found." });
     }
-    // Increment view count
-    await db.query(
-      "UPDATE projects SET view_count = view_count + 1 WHERE id = ?",
-      [req.params.id],
-    );
-    res.json(rows[0]);
+    const columns = await getProjectColumns();
+    if (columns.has("view_count")) {
+      await db.query(
+        "UPDATE projects SET view_count = view_count + 1 WHERE id = ?",
+        [req.params.id],
+      );
+      rows[0].view_count = Number(rows[0].view_count || 0) + 1;
+    }
+    res.json(mapProjectRow(rows[0]));
   } catch (err) {
     console.error("❌ GET /api/projects/:id error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// UPDATE a project
+app.put("/api/projects/:id", async (req, res) => {
+  const title = String(req.body.title || "").trim();
+  if (title.length < 3) {
+    return res
+      .status(400)
+      .json({ error: "Project title must be at least 3 characters." });
+  }
+
+  try {
+    const columns = await getProjectColumns();
+    const payload = getProjectPayload(req.body, columns);
+    const keys = Object.keys(payload);
+    if (keys.length === 0) {
+      return res.status(400).json({ error: "No project fields to update." });
+    }
+
+    const assignments = keys.map((key) => `\`${key}\` = ?`).join(", ");
+    const values = keys.map((key) => payload[key]);
+    const [result] = await db.query(
+      `UPDATE projects SET ${assignments} WHERE id = ?`,
+      [...values, req.params.id],
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+
+    const [rows] = await db.query("SELECT * FROM projects WHERE id = ?", [
+      req.params.id,
+    ]);
+    res.json({
+      success: true,
+      project: rows[0] ? mapProjectRow(rows[0]) : null,
+    });
+  } catch (err) {
+    console.error("âŒ PUT /api/projects error:", err.message);
+    res.status(500).json({ error: "Failed to update project." });
+  }
+});
+
+// DELETE a project
+app.delete("/api/projects/:id", async (req, res) => {
+  try {
+    const [result] = await db.query("DELETE FROM projects WHERE id = ?", [
+      req.params.id,
+    ]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error("âŒ DELETE /api/projects error:", err.message);
+    res.status(500).json({ error: "Failed to delete project." });
   }
 });
 
@@ -1515,6 +3067,9 @@ app.get("/api/top-rated", async (req, res) => {
 // ERROR HANDLING MIDDLEWARE
 // ===================================================================
 app.use((err, req, res, next) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Uploaded image is too large. Please choose a file under 2MB." });
+  }
   console.error("❌ Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
 });
@@ -1529,6 +3084,11 @@ const server = app.listen(PORT, () => {
   console.log(`📖 API Documentation: http://localhost:${PORT}/api/health`);
   ensureTeacherRoleValue();
   ensureStudentYearColumns();
+  ensureUserProfileColumns();
+  ensureAvatarUploadDir();
+  ensureCertificatesTable();
+  ensureExamTables();
+  ensureProjectColumns();
 
   if (!aiProvider) {
     console.error("WARNING: AI chat is not configured. Add GROQ_API_KEY or ANTHROPIC_API_KEY.");
