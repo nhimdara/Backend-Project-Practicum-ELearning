@@ -47,6 +47,33 @@ function buildStaffEmail(name, role) {
   return `${base}.${role}@${EMAIL_DOMAIN}`;
 }
 
+function dedupeVideos(rows) {
+  const bySlot = new Map();
+  for (const row of rows) {
+    const key = `${row.lesson_id}:${row.order_index || 1}`;
+    const current = bySlot.get(key);
+    if (!current || Number(row.id) > Number(current.id)) {
+      bySlot.set(key, row);
+    }
+  }
+  return [...bySlot.values()].sort(
+    (a, b) =>
+      Number(a.lesson_id) - Number(b.lesson_id) ||
+      Number(a.order_index || 1) - Number(b.order_index || 1) ||
+      Number(a.id) - Number(b.id),
+  );
+}
+
+async function removeDuplicateVideoSlots(lessonId, orderIndex, keepId) {
+  await db.query(
+    `DELETE FROM videos
+     WHERE lesson_id = ?
+       AND COALESCE(order_index, 1) = ?
+       AND id <> ?`,
+    [lessonId, orderIndex || 1, keepId],
+  );
+}
+
 async function ensureStudentYearColumns() {
   try {
     const [columns] = await db.query(
@@ -757,13 +784,13 @@ app.get("/api/lessons/:id", async (req, res) => {
     }
 
     const [videos] = await db.query(
-      "SELECT * FROM videos WHERE lesson_id = ? ORDER BY order_index",
+      "SELECT * FROM videos WHERE lesson_id = ? ORDER BY order_index, id",
       [req.params.id],
     );
 
     res.json({
       ...lessons[0],
-      videos,
+      videos: dedupeVideos(videos),
     });
   } catch (err) {
     console.error("❌ GET /api/lessons/:id error:", err.message);
@@ -1006,9 +1033,9 @@ app.delete("/api/lessons/:id", async (req, res) => {
 app.get("/api/videos", async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT id, lesson_id, title, link, thumbnail, duration_minutes, view_count, description, is_free, order_index FROM videos ORDER BY lesson_id, order_index",
+      "SELECT id, lesson_id, title, link, thumbnail, duration_minutes, view_count, description, is_free, order_index FROM videos ORDER BY lesson_id, order_index, id",
     );
-    res.json(rows);
+    res.json(dedupeVideos(rows));
   } catch (err) {
     console.error("❌ /api/videos error:", err.message);
     res.status(500).json({ error: err.message });
@@ -1019,10 +1046,10 @@ app.get("/api/videos", async (req, res) => {
 app.get("/api/lessons/:id/videos", async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT * FROM videos WHERE lesson_id = ? ORDER BY order_index",
+      "SELECT * FROM videos WHERE lesson_id = ? ORDER BY order_index, id",
       [req.params.id],
     );
-    res.json(rows);
+    res.json(dedupeVideos(rows));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1071,6 +1098,11 @@ app.post("/api/videos", async (req, res) => {
     const [newVideo] = await db.query("SELECT * FROM videos WHERE id = ?", [
       result.insertId,
     ]);
+    await removeDuplicateVideoSlots(
+      lesson_id,
+      order_index || 1,
+      result.insertId,
+    );
     res.status(201).json({
       success: true,
       video: newVideo[0],
@@ -1095,6 +1127,18 @@ app.put("/api/videos/:id", async (req, res) => {
     order_index,
   } = req.body;
 
+  if (!lesson_id) {
+    return res.status(400).json({ error: "Lesson ID is required." });
+  }
+  if (!title || title.trim().length < 3) {
+    return res
+      .status(400)
+      .json({ error: "Title must be at least 3 characters." });
+  }
+  if (!link || !link.trim()) {
+    return res.status(400).json({ error: "Video URL is required." });
+  }
+
   try {
     const [result] = await db.query(
       `UPDATE videos SET 
@@ -1117,7 +1161,11 @@ app.put("/api/videos/:id", async (req, res) => {
       return res.status(404).json({ error: "Video not found." });
     }
 
-    res.json({ success: true });
+    await removeDuplicateVideoSlots(lesson_id, order_index || 1, req.params.id);
+    const [updatedVideo] = await db.query("SELECT * FROM videos WHERE id = ?", [
+      req.params.id,
+    ]);
+    res.json({ success: true, video: updatedVideo[0] });
   } catch (err) {
     console.error("❌ PUT /api/videos error:", err.message);
     res.status(500).json({ error: err.message });
