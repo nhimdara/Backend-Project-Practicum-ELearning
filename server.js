@@ -21,7 +21,17 @@ const IMAGE_EXTENSIONS = {
   "image/webp": "webp",
 };
 
-app.use(cors());
+const corsOptions = {
+  origin: true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-user-role"],
+  optionsSuccessStatus: 204,
+  maxAge: 86400,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "6mb" }));
 app.use("/uploads", express.static(UPLOAD_ROOT));
 
@@ -624,8 +634,9 @@ async function getActorRole(req) {
   if (Number.isInteger(userId) && userId > 0) {
     const [rows] = await db.query("SELECT id, role FROM users WHERE id = ? LIMIT 1", [userId]);
     if (rows.length > 0) {
+      const dbRole = String(rows[0].role || "").trim().toLowerCase();
       return {
-        role: rows[0].role === "client" ? "student" : rows[0].role,
+        role: dbRole === "client" ? "student" : dbRole,
         userId: rows[0].id,
       };
     }
@@ -675,6 +686,52 @@ function normalizeExamQuestionPayload(body) {
     correctAnswer,
     sortOrder: Number.isInteger(sortOrder) && sortOrder > 0 ? sortOrder : null,
   };
+}
+
+async function ensureExamForMajor(major, { seedDefaults = false } = {}) {
+  await ensureExamTables();
+
+  if (!normalizeExamMajor(major)) {
+    return null;
+  }
+
+  await db.query(
+    `INSERT INTO exams (major, title, description, pass_score, accent_color, is_active)
+     VALUES (?, ?, ?, ?, ?, 1)
+     ON DUPLICATE KEY UPDATE is_active = 1`,
+    [
+      major,
+      `${major} Certification Exam`,
+      `${major} certification exam`,
+      EXAM_PASS_SCORE,
+      EXAM_BANK[major]?.accentColor || "#4f46e5",
+    ],
+  );
+
+  const [[exam]] = await db.query("SELECT id FROM exams WHERE major = ? LIMIT 1", [major]);
+  if (!exam) {
+    return null;
+  }
+
+  if (seedDefaults && EXAM_BANK[major]?.questions?.length) {
+    for (const [index, question] of EXAM_BANK[major].questions.entries()) {
+      await db.query(
+        `INSERT IGNORE INTO exam_questions
+         (exam_id, created_by, question_key, question_text, options, correct_answer, sort_order, is_active)
+         VALUES (?, NULL, ?, ?, ?, ?, ?, 1)`,
+        [
+          exam.id,
+          question.id || `${major.toLowerCase()}-${index + 1}`,
+          question.question,
+          JSON.stringify(question.options || []),
+          Number(question.correctAnswer ?? question.answer),
+          index + 1,
+        ],
+      );
+    }
+  }
+
+  return exam;
 }
 
 async function getCompletedCertificateRows(userId) {
@@ -812,22 +869,20 @@ async function getExamDefinition(major) {
         [exams[0].id],
       );
 
-      if (questions.length > 0) {
-        return {
-          id: exams[0].id,
-          major,
-          title: exams[0].title,
-          description: exams[0].description || `${major} certification exam`,
-          passScore: Number(exams[0].pass_score || EXAM_PASS_SCORE),
-          accentColor: exams[0].accent_color || "#4f46e5",
-          questions: questions.map((question) => ({
-            id: question.question_key,
-            question: question.question_text,
-            options: parseJsonField(question.options, []),
-            answer: Number(question.correct_answer),
-          })),
-        };
-      }
+      return {
+        id: exams[0].id,
+        major,
+        title: exams[0].title,
+        description: exams[0].description || `${major} certification exam`,
+        passScore: Number(exams[0].pass_score || EXAM_PASS_SCORE),
+        accentColor: exams[0].accent_color || "#4f46e5",
+        questions: questions.map((question) => ({
+          id: question.question_key,
+          question: question.question_text,
+          options: parseJsonField(question.options, []),
+          answer: Number(question.correct_answer),
+        })),
+      };
     }
   } catch (err) {
     console.error("Could not load exam from database:", err.message);
@@ -842,7 +897,7 @@ async function getExamDefinition(major) {
   };
 }
 
-async function publicExam(major) {
+async function publicExam(major, { includeAnswers = false } = {}) {
   const exam = await getExamDefinition(major);
   if (!exam) return null;
   return {
@@ -851,11 +906,17 @@ async function publicExam(major) {
     description: exam.description,
     passScore: exam.passScore || EXAM_PASS_SCORE,
     totalQuestions: exam.questions.length,
-    questions: exam.questions.map(({ id, question, options }) => ({
-      id,
-      question,
-      options,
-    })),
+    questions: exam.questions.map(({ id, question, options, answer }) => {
+      const publicQuestion = {
+        id,
+        question,
+        options,
+      };
+      if (includeAnswers) {
+        publicQuestion.correctAnswer = answer;
+      }
+      return publicQuestion;
+    }),
   };
 }
 
@@ -1895,7 +1956,9 @@ app.post("/api/users/:id/avatar", async (req, res) => {
 // GET major-specific student exam
 app.get("/api/exams/by-major/:major", async (req, res) => {
   const major = normalizeExamMajor(req.params.major);
-  const exam = await publicExam(major);
+  const actor = await getActorRole(req);
+  const includeAnswers = actor && ["teacher", "admin"].includes(actor.role);
+  const exam = await publicExam(major, { includeAnswers });
 
   if (!exam) {
     return res.status(404).json({ error: "Exam is not available for this major." });
@@ -1920,22 +1983,7 @@ app.post("/api/exams/by-major/:major/questions", async (req, res) => {
   }
 
   try {
-    await ensureExamTables();
-
-    await db.query(
-      `INSERT INTO exams (major, title, description, pass_score, accent_color, is_active)
-       VALUES (?, ?, ?, ?, ?, 1)
-       ON DUPLICATE KEY UPDATE is_active = 1`,
-      [
-        major,
-        `${major} Certification Exam`,
-        `${major} certification exam`,
-        EXAM_PASS_SCORE,
-        EXAM_BANK[major]?.accentColor || "#4f46e5",
-      ],
-    );
-
-    const [[exam]] = await db.query("SELECT id FROM exams WHERE major = ? LIMIT 1", [major]);
+    const exam = await ensureExamForMajor(major, { seedDefaults: true });
     if (!exam) {
       return res.status(500).json({ error: "Could not prepare exam." });
     }
@@ -1986,6 +2034,121 @@ app.post("/api/exams/by-major/:major/questions", async (req, res) => {
   }
 });
 
+// UPDATE a student exam question (teachers and admins only)
+app.put("/api/exams/by-major/:major/questions/:questionId", async (req, res) => {
+  const actor = await requireExamQuestionManager(req, res);
+  if (!actor) return;
+
+  const major = normalizeExamMajor(req.params.major || req.body?.major);
+  const questionId = String(req.params.questionId || "").trim();
+
+  if (!major) {
+    return res.status(400).json({ error: "A valid major is required." });
+  }
+
+  if (!questionId) {
+    return res.status(400).json({ error: "Question ID is required." });
+  }
+
+  const payload = normalizeExamQuestionPayload(req.body);
+  if (payload.error) {
+    return res.status(400).json({ error: payload.error });
+  }
+
+  try {
+    const exam = await ensureExamForMajor(major, { seedDefaults: true });
+    if (!exam) {
+      return res.status(500).json({ error: "Could not prepare exam." });
+    }
+
+    const [result] = await db.query(
+      `UPDATE exam_questions
+       SET created_by = COALESCE(?, created_by),
+           question_text = ?,
+           options = ?,
+           correct_answer = ?,
+           sort_order = COALESCE(?, sort_order),
+           is_active = 1
+       WHERE exam_id = ? AND question_key = ?`,
+      [
+        actor.userId,
+        payload.questionText,
+        JSON.stringify(payload.options),
+        payload.correctAnswer,
+        payload.sortOrder,
+        exam.id,
+        questionId,
+      ],
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Exam question not found." });
+    }
+
+    res.json({
+      success: true,
+      major,
+      question: {
+        id: questionId,
+        question: payload.questionText,
+        options: payload.options,
+        correctAnswer: payload.correctAnswer,
+        sortOrder: payload.sortOrder,
+      },
+    });
+  } catch (err) {
+    console.error("Could not update exam question:", err.message);
+    res.status(500).json({ error: "Failed to update exam question." });
+  }
+});
+
+// DELETE a student exam question (teachers and admins only)
+app.delete("/api/exams/by-major/:major/questions/:questionId", async (req, res) => {
+  const actor = await requireExamQuestionManager(req, res);
+  if (!actor) return;
+
+  const major = normalizeExamMajor(req.params.major);
+  const questionId = String(req.params.questionId || "").trim();
+
+  if (!major) {
+    return res.status(400).json({ error: "A valid major is required." });
+  }
+
+  if (!questionId) {
+    return res.status(400).json({ error: "Question ID is required." });
+  }
+
+  try {
+    const exam = await ensureExamForMajor(major, { seedDefaults: true });
+    if (!exam) {
+      return res.status(500).json({ error: "Could not prepare exam." });
+    }
+
+    const [result] = await db.query(
+      `UPDATE exam_questions
+       SET is_active = 0
+       WHERE exam_id = ? AND question_key = ? AND is_active = 1`,
+      [exam.id, questionId],
+    );
+
+    if (result.affectedRows === 0) {
+      const [existing] = await db.query(
+        "SELECT id FROM exam_questions WHERE exam_id = ? AND question_key = ? LIMIT 1",
+        [exam.id, questionId],
+      );
+      if (existing.length > 0) {
+        return res.json({ success: true, major, questionId, alreadyDeleted: true });
+      }
+      return res.status(404).json({ error: "Exam question not found." });
+    }
+
+    res.json({ success: true, major, questionId });
+  } catch (err) {
+    console.error("Could not delete exam question:", err.message);
+    res.status(500).json({ error: "Failed to delete exam question." });
+  }
+});
+
 // SUBMIT student exam and award a certificate on pass
 app.post("/api/users/:id/exam-attempts", async (req, res) => {
   const major = normalizeExamMajor(req.body?.major);
@@ -2009,6 +2172,10 @@ app.post("/api/users/:id/exam-attempts", async (req, res) => {
 
     if (users[0].major && users[0].major !== major) {
       return res.status(403).json({ error: "This exam does not match the student's major." });
+    }
+
+    if (!exam.questions.length) {
+      return res.status(400).json({ error: "This exam does not have any questions yet." });
     }
 
     const details = exam.questions.map((question) => {
