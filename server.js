@@ -165,25 +165,31 @@ function getCurrentAcademicYear(startYear) {
   return clampAcademicYear(new Date().getFullYear() - start + 1);
 }
 
-function normalizeStudentEmailName(name) {
-  return String(name || "")
+function getStudentEmailNameParts(name) {
+  const parts = String(name || "")
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "")
-    .slice(0, 32);
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const firstName = (parts[0] || "student").slice(0, 24);
+  const lastName = (parts.length > 1 ? parts[parts.length - 1] : firstName).slice(
+    0,
+    24,
+  );
+  return { firstName, lastName };
 }
 
 function buildStudentEmail(name, startYear, endYear) {
-  const base = normalizeStudentEmailName(name);
+  const { firstName, lastName } = getStudentEmailNameParts(name);
   const start = String(startYear).slice(-2);
   const end = String(endYear).slice(-2);
-  return `${base}.${end}${start}@${EMAIL_DOMAIN}`;
+  return `${firstName}.${lastName}.${start}${end}@${EMAIL_DOMAIN}`;
 }
 
 function buildStaffEmail(name, role) {
-  const base = normalizeStudentEmailName(name);
-  return `${base}.${role}@${EMAIL_DOMAIN}`;
+  const { firstName, lastName } = getStudentEmailNameParts(name);
+  return `${firstName}.${lastName}.${role}@${EMAIL_DOMAIN}`;
 }
 
 function dedupeVideos(rows) {
