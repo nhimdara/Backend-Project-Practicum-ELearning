@@ -32,17 +32,14 @@ async function ensureStudentYearColumns() {
 async function ensureTeacherRoleValue() {
   try {
     const [columns] = await db.query(
-      `SHOW COLUMNS FROM users WHERE Field = 'role'`,
+      `SELECT data_type AS "Type"
+       FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND table_name = 'users'
+         AND column_name = 'role'`,
     );
-    const roleType = columns[0]?.Type || "";
-
-    if (!roleType.includes("'teacher'")) {
-      await db.query(
-        `ALTER TABLE users
-         MODIFY role ENUM('student','teacher','admin') DEFAULT 'student'`,
-      );
-      console.log("✅ Teacher role is ready");
-    }
+    if (columns.length === 0) throw new Error("users.role column does not exist");
+    console.log("✅ Teacher role is ready");
   } catch (err) {
     console.error("❌ Could not verify teacher role:", err.message);
   }

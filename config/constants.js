@@ -1,3 +1,31 @@
+﻿function generatedQuestions(major) {
+  const prefix = major === "Mathematics" ? "math" : major.toLowerCase();
+  return Array.from({ length: 45 }, (_, index) => {
+    const n = index + 2;
+    let question;
+    let correct;
+    let wrong;
+    if (major === "Mathematics") {
+      const a = (index % 7) + 2;
+      const b = index % 9;
+      question = `Solve ${a}x + ${b} = ${a * n + b}.`;
+      correct = `x = ${n}`;
+      wrong = [`x = ${n - 1}`, `x = ${n + 1}`, `x = ${a}`];
+    } else if (major === "IT") {
+      question = `Using 1 GB = 1024 MB, how many MB are in ${n} GB?`;
+      correct = String(n * 1024);
+      wrong = [String(n * 1000), String((n + 1) * 1024), String(n * 512)];
+    } else {
+      question = `What is decimal ${n} in binary?`;
+      correct = n.toString(2);
+      wrong = [(n - 1).toString(2), (n + 1).toString(2), (n + 2).toString(2)];
+    }
+    const answer = index % 4;
+    const options = [...wrong];
+    options.splice(answer, 0, correct);
+    return { id: `${prefix}-${index + 6}`, question, options, answer };
+  });
+}
 const ALLOWED_MAJORS = ["ITE", "IT", "Mathematics"];
 const EMAIL_DOMAIN = "elearning.com";
 const EXAM_PASS_SCORE = 70;
@@ -38,6 +66,7 @@ const EXAM_BANK = {
         options: ["Compression", "Encryption through TLS", "Offline caching", "Database access"],
         answer: 1,
       },
+      ...generatedQuestions("ITE"),
     ],
   },
   IT: {
@@ -75,6 +104,7 @@ const EXAM_BANK = {
         options: ["Horizontal scaling", "Defragmentation", "Serialization", "Packet sniffing"],
         answer: 0,
       },
+      ...generatedQuestions("IT"),
     ],
   },
   Mathematics: {
@@ -112,8 +142,12 @@ const EXAM_BANK = {
         options: ["0", "1/4", "1/2", "1"],
         answer: 2,
       },
+      ...generatedQuestions("Mathematics"),
     ],
   },
 };
 
 module.exports = { ALLOWED_MAJORS, EMAIL_DOMAIN, EXAM_PASS_SCORE, EXAM_BANK };
+
+
+

@@ -1,0 +1,9 @@
+◇ injected env (6) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+✅ Server running on http://localhost:5001
+📡 API URL: http://localhost:5001/api
+📖 API Documentation: http://localhost:5001/api/health
+AI chat provider configured: groq
+✅ PostgreSQL connected successfully!
+✅ Teacher role is ready
