@@ -35,3 +35,10 @@
 npm start
 npm run dev
 ```
+
+## Render deployment
+
+This repository includes `render.yaml`, which creates both the Node web service
+and a Render Postgres database. Create a new Render Blueprint from this GitHub
+repository, provide one AI API key when prompted, and then import the PostgreSQL
+schema/data into the created database. The service health check is `/api/health`.

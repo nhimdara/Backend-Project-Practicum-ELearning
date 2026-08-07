@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: learnflow-backend
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: learnflow-postgres
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
+
+databases:
+  - name: learnflow-postgres
+    plan: free
+    databaseName: learnflow
+    user: learnflow
