@@ -1,17 +1,28 @@
 const { Pool } = require("pg");
 require("dotenv").config();
 
-const pool = new Pool(
-  process.env.DATABASE_URL
-    ? { connectionString: process.env.DATABASE_URL }
-    : {
+const connectionOptions = process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL }
+  : {
         host: process.env.DB_HOST,
         user: process.env.DB_USER,
         password: process.env.DB_PASSWORD,
         database: process.env.DB_NAME,
         port: Number(process.env.DB_PORT || 5432),
-      },
-);
+    };
+
+const pool = new Pool({
+  ...connectionOptions,
+  max: Number(process.env.DB_POOL_MAX || 3),
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 15000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
+});
+
+pool.on("error", (error) => {
+  console.error("❌ Idle PostgreSQL connection error:", error.code || error.message);
+});
 
 function postgresPlaceholders(sql) {
   let index = 0;

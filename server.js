@@ -44,17 +44,29 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ===================================================================
 const PORT = process.env.PORT || 5001;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`📡 API URL: http://localhost:${PORT}/api`);
   console.log(`📖 API Documentation: http://localhost:${PORT}/api/health`);
-  ensureTeacherRoleValue();
-  ensureStudentYearColumns();
-  ensureUserProfileColumns();
-  ensureAvatarUploadDir();
-  ensureCertificatesTable();
-  ensureExamTables();
-  ensureProjectColumns();
+  const startupChecks = [
+    ["avatar directory", ensureAvatarUploadDir],
+    ["teacher role", ensureTeacherRoleValue],
+    ["student year columns", ensureStudentYearColumns],
+    ["user profile columns", ensureUserProfileColumns],
+    ["certificates table", ensureCertificatesTable],
+    ["exam tables", ensureExamTables],
+    ["projects table", ensureProjectColumns],
+  ];
+
+  // Run schema checks one at a time so small hosted PostgreSQL plans are not
+  // hit with a burst of simultaneous connections while waking up.
+  for (const [name, check] of startupChecks) {
+    try {
+      await check();
+    } catch (error) {
+      console.error(`❌ Startup check failed (${name}):`, error.code || error.message);
+    }
+  }
 
   if (!aiProvider) {
     console.error("WARNING: AI chat is not configured. Add GROQ_API_KEY or ANTHROPIC_API_KEY.");
