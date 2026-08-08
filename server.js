@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { rateLimit } = require("express-rate-limit");
 
 const {
   app,
@@ -19,6 +20,20 @@ const registerLessonRoutes = require("./routes/lessonRoutes");
 const registerVideoRoutes = require("./routes/videoRoutes");
 const registerProjectRoutes = require("./routes/projectRoutes");
 const registerCatalogRoutes = require("./routes/catalogRoutes");
+const registerNotificationRoutes = require("./routes/notificationRoutes");
+const { ensureNotificationsTable } = require("./services/notificationService");
+const { ensureBootstrapAdmin } = require("./services/bootstrapService");
+const { authorizeApiRequest } = require("./middleware/auth");
+
+const authenticationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Too many authentication attempts. Please try again later." },
+});
+app.use(["/api/login", "/api/auth/forgot-password", "/api/auth/verify-reset-otp", "/api/auth/reset-password"], authenticationLimiter);
+app.use("/api", authorizeApiRequest);
 
 registerChatRoutes(app);
 registerSystemRoutes(app);
@@ -28,6 +43,7 @@ registerLessonRoutes(app);
 registerVideoRoutes(app);
 registerProjectRoutes(app);
 registerCatalogRoutes(app);
+registerNotificationRoutes(app);
 
 // ===================================================================
 // ERROR HANDLING MIDDLEWARE
@@ -55,6 +71,8 @@ const server = app.listen(PORT, () => {
   ensureCertificatesTable();
   ensureExamTables();
   ensureProjectColumns();
+  ensureNotificationsTable();
+  ensureBootstrapAdmin();
 
   if (!aiProvider) {
     console.error("WARNING: AI chat is not configured. Add GROQ_API_KEY or ANTHROPIC_API_KEY.");

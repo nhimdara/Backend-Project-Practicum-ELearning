@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const bcrypt = require("bcrypt");
 const fs = require("fs");
 const path = require("path");
@@ -15,6 +16,8 @@ const { anthropicApiKey, groqApiKey, aiProvider, anthropic } = require("./servic
 // Fix: Correct Anthropic import
 
 const app = express();
+app.disable("x-powered-by");
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 const UPLOAD_ROOT = path.join(__dirname, "uploads");
 const AVATAR_UPLOAD_DIR = path.join(UPLOAD_ROOT, "avatars");
 const MAX_AVATAR_SIZE_BYTES = 2 * 1024 * 1024;
@@ -27,7 +30,14 @@ const IMAGE_EXTENSIONS = {
 };
 
 const corsOptions = {
-  origin: true,
+  origin(origin, callback) {
+    const allowedOrigins = String(process.env.FRONTEND_ORIGINS || "http://localhost:5173,http://localhost:3000")
+      .split(",")
+      .map((value) => value.trim().replace(/\/$/, ""))
+      .filter(Boolean);
+    if (!origin || allowedOrigins.includes(String(origin).replace(/\/$/, ""))) return callback(null, true);
+    return callback(new Error("Origin is not allowed by CORS."));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-user-role"],

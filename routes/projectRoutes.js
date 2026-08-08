@@ -90,6 +90,7 @@ app.post("/api/projects", async (req, res) => {
   try {
     const columns = await getProjectColumns();
     const payload = getProjectPayload(req.body, columns);
+    if (columns.has("creator_user_id")) payload.creator_user_id = req.user.id;
     if (!columns.has("title")) {
       return res.status(500).json({ error: "Projects table is missing title." });
     }
@@ -151,6 +152,12 @@ app.put("/api/projects/:id", async (req, res) => {
 
   try {
     const columns = await getProjectColumns();
+    const [existing] = await db.query("SELECT * FROM projects WHERE id = ?", [req.params.id]);
+    if (!existing.length) return res.status(404).json({ error: "Project not found." });
+    const staff = ["admin", "teacher"].includes(req.user.role);
+    if (!staff && String(existing[0].creator_user_id || "") !== String(req.user.id)) {
+      return res.status(403).json({ error: "You can only edit your own projects." });
+    }
     const payload = getProjectPayload(req.body, columns);
     const keys = Object.keys(payload);
     if (keys.length === 0) {
@@ -183,6 +190,12 @@ app.put("/api/projects/:id", async (req, res) => {
 // DELETE a project
 app.delete("/api/projects/:id", async (req, res) => {
   try {
+    const [existing] = await db.query("SELECT creator_user_id FROM projects WHERE id = ?", [req.params.id]);
+    if (!existing.length) return res.status(404).json({ error: "Project not found." });
+    const staff = ["admin", "teacher"].includes(req.user.role);
+    if (!staff && String(existing[0].creator_user_id || "") !== String(req.user.id)) {
+      return res.status(403).json({ error: "You can only delete your own projects." });
+    }
     const [result] = await db.query("DELETE FROM projects WHERE id = ?", [
       req.params.id,
     ]);
