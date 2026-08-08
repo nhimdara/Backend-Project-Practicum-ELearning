@@ -10,9 +10,12 @@ const connectionOptions = process.env.DATABASE_URL
         database: process.env.DB_NAME,
         port: Number(process.env.DB_PORT || 5432),
     };
+const useSsl = String(process.env.DB_SSL || "").toLowerCase() === "true" ||
+  (process.env.NODE_ENV === "production" && Boolean(process.env.DATABASE_URL));
 
 const pool = new Pool({
   ...connectionOptions,
+  ssl: useSsl ? { rejectUnauthorized: false } : undefined,
   max: Number(process.env.DB_POOL_MAX || 3),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 15000,
