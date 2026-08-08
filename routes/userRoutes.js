@@ -58,8 +58,56 @@ const {
   aiProvider,
   anthropic,
 } = require("../appContext");
+const {
+  normalizeEmail,
+  issuePasswordResetOtp,
+  verifyPasswordResetOtp,
+} = require("../services/passwordResetService");
 
 module.exports = function registerUserRoutes(app) {
+app.post("/api/auth/forgot-password", async (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+  try {
+    const [users] = await db.query("SELECT name FROM users WHERE email = ? LIMIT 1", [email]);
+    // Do not reveal whether an account exists.
+    if (!users.length) return res.status(404).json({ error: "No account was found with this email." });
+    const demoOtp = await issuePasswordResetOtp(email);
+    return res.json({ success: true, message: "Demo reset code created.", demoOtp });
+  } catch (err) {
+    console.error("Forgot-password error:", err.cause?.message || err.message);
+    return res.status(err.status || 500).json({ error: err.message || "Could not send reset code." });
+  }
+});
+
+app.post("/api/auth/verify-reset-otp", (req, res) => {
+  const result = verifyPasswordResetOtp(req.body.email, req.body.otp);
+  if (!result.valid) return res.status(400).json({ error: result.error });
+  return res.json({ success: true });
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  const password = String(req.body.password || "");
+  if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return res.status(400).json({ error: "Password must be at least 8 characters and include a letter and number." });
+  }
+  const verification = verifyPasswordResetOtp(email, req.body.otp);
+  if (!verification.valid) return res.status(400).json({ error: verification.error });
+  try {
+    const passwordHash = await bcrypt.hash(password, 10);
+    const [result] = await db.query("UPDATE users SET password_hash = ? WHERE email = ?", [passwordHash, email]);
+    if (!result.affectedRows) return res.status(400).json({ error: "Unable to reset this account." });
+    verifyPasswordResetOtp(email, req.body.otp, true);
+    return res.json({ success: true, message: "Password reset successfully." });
+  } catch (err) {
+    console.error("Reset-password error:", err.message);
+    return res.status(500).json({ error: "Could not reset password. Please try again." });
+  }
+});
+
 app.post("/api/register", async (req, res) => {
   const { name, email, password } = req.body;
 
