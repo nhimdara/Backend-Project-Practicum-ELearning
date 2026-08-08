@@ -60,19 +60,29 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ===================================================================
 const PORT = process.env.PORT || 5001;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`📡 API URL: http://localhost:${PORT}/api`);
   console.log(`📖 API Documentation: http://localhost:${PORT}/api/health`);
-  ensureTeacherRoleValue();
-  ensureStudentYearColumns();
-  ensureUserProfileColumns();
-  ensureAvatarUploadDir();
-  ensureCertificatesTable();
-  ensureExamTables();
-  ensureProjectColumns();
-  ensureNotificationsTable();
-  ensureBootstrapAdmin();
+  const startupTasks = [
+    ["teacher roles", ensureTeacherRoleValue],
+    ["student year columns", ensureStudentYearColumns],
+    ["user profile columns", ensureUserProfileColumns],
+    ["avatar directory", ensureAvatarUploadDir],
+    ["certificates table", ensureCertificatesTable],
+    ["exam tables", ensureExamTables],
+    ["project columns", ensureProjectColumns],
+    ["notifications table", ensureNotificationsTable],
+    ["administrator bootstrap", ensureBootstrapAdmin],
+  ];
+  const startupResults = await Promise.allSettled(
+    startupTasks.map(([, task]) => Promise.resolve().then(task)),
+  );
+  startupResults.forEach((result, index) => {
+    if (result.status === "rejected") {
+      console.error(`Startup check failed (${startupTasks[index][0]}):`, result.reason?.message || result.reason);
+    }
+  });
 
   if (!aiProvider) {
     console.error("WARNING: AI chat is not configured. Add GROQ_API_KEY or ANTHROPIC_API_KEY.");
