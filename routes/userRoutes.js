@@ -63,7 +63,6 @@ const {
   issuePasswordResetOtp,
   verifyPasswordResetOtp,
 } = require("../services/passwordResetService");
-const { createAccessToken } = require("../middleware/auth");
 
 module.exports = function registerUserRoutes(app) {
 app.post("/api/auth/forgot-password", async (req, res) => {
@@ -201,7 +200,6 @@ app.post("/api/login", async (req, res) => {
 
     res.json({
       success: true,
-      token: createAccessToken(user),
       user: {
         id: user.id,
         name: user.name,

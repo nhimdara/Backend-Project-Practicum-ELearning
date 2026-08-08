@@ -77,7 +77,6 @@ async function ensureProjectColumns() {
           view_count INT DEFAULT 0,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-          ,creator_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL
         )
       `);
       projectColumnCache = null;
@@ -95,7 +94,6 @@ async function ensureProjectColumns() {
     if (!columns.has("featured")) alters.push("ADD COLUMN featured TINYINT(1) DEFAULT 0");
     if (!columns.has("is_active")) alters.push("ADD COLUMN is_active TINYINT(1) DEFAULT 1");
     if (!columns.has("view_count")) alters.push("ADD COLUMN view_count INT DEFAULT 0");
-    if (!columns.has("creator_user_id")) alters.push("ADD COLUMN creator_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL");
 
     if (alters.length > 0) {
       await db.query(`ALTER TABLE projects ${alters.join(", ")}`);
