@@ -1,12 +1,6 @@
 const { Pool } = require("pg");
 require("dotenv").config();
 
-if (!process.env.DATABASE_URL && !process.env.DB_HOST) {
-  console.error(
-    "❌ Database configuration missing. Set DATABASE_URL on Render or DB_HOST/DB_USER/DB_PASSWORD/DB_NAME locally.",
-  );
-}
-
 const pool = new Pool(
   process.env.DATABASE_URL
     ? { connectionString: process.env.DATABASE_URL }
