@@ -299,15 +299,26 @@ app.post("/api/superadmin/admins", async (req, res) => {
   try {
     if (!(await requireSuperadmin(req, res))) return;
     const name = String(req.body.name || "").trim();
-    const email = String(req.body.email || "").trim().toLowerCase();
+    const emailBase = name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ".")
+      .replace(/^\.|\.$/g, "") || "admin";
+    let email = `${emailBase}.admin@${EMAIL_DOMAIN}`;
     const password = String(req.body.password || "");
     if (name.length < 2) return res.status(400).json({ error: "Admin name must be at least 2 characters." });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
     if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
       return res.status(400).json({ error: "Password must be at least 8 characters with a letter and number." });
     }
-    const [existing] = await db.query("SELECT id FROM users WHERE email = ? LIMIT 1", [email]);
-    if (existing.length) return res.status(409).json({ error: "An account with this email already exists." });
+    let suffix = 2;
+    let [existing] = await db.query("SELECT id FROM users WHERE email = ? LIMIT 1", [email]);
+    while (existing.length) {
+      email = `${emailBase}.admin${suffix}@${EMAIL_DOMAIN}`;
+      suffix += 1;
+      [existing] = await db.query("SELECT id FROM users WHERE email = ? LIMIT 1", [email]);
+    }
     const passwordHash = await bcrypt.hash(password, 12);
     const [result] = await db.query(
       "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
