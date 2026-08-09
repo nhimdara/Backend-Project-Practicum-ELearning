@@ -306,7 +306,7 @@ app.post("/api/superadmin/admins", async (req, res) => {
       .replace(/[^a-z0-9]+/g, ".")
       .replace(/^\.|\.$/g, "") || "admin";
     let email = `${emailBase}.admin@${EMAIL_DOMAIN}`;
-    const password = String(req.body.password || "");
+    const password = String(req.body.password || require("crypto").randomBytes(12).toString("base64url"));
     if (name.length < 2) return res.status(400).json({ error: "Admin name must be at least 2 characters." });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
     if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
@@ -324,7 +324,11 @@ app.post("/api/superadmin/admins", async (req, res) => {
       "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
       [name, email, passwordHash],
     );
-    res.status(201).json({ success: true, admin: { id: result.insertId, name, email, role: "admin" } });
+    res.status(201).json({
+      success: true,
+      admin: { id: result.insertId, name, email, role: "admin" },
+      temporaryPassword: password,
+    });
   } catch (err) {
     console.error("Create admin error:", err.message);
     res.status(500).json({ error: "Could not create administrator." });
