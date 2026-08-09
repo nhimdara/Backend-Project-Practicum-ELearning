@@ -8,7 +8,7 @@ require("dotenv").config();
 const { ALLOWED_MAJORS, EMAIL_DOMAIN, EXAM_PASS_SCORE, EXAM_BANK } = require("./config/constants");
 const { clampAcademicYear, getCurrentAcademicYear, getStudentEmailNameParts, buildStudentEmail, buildStaffEmail } = require("./utils/userHelpers");
 const { dedupeVideos, removeDuplicateVideoSlots } = require("./utils/videoHelpers");
-const { ensureStudentYearColumns, ensureTeacherRoleValue, ensureUserProfileColumns } = require("./services/schemaService");
+const { ensureStudentYearColumns, ensureTeacherRoleValue, ensureUserProfileColumns, ensureSuperadminAccount } = require("./services/schemaService");
 const { normalizeProjectTags, toTinyInt, mapProjectRow, getProjectColumns, ensureProjectColumns, getProjectPayload } = require("./services/projectService");
 const { anthropicApiKey, groqApiKey, aiProvider, anthropic } = require("./services/aiService");
 
@@ -862,6 +862,7 @@ module.exports = {
   ensureStudentYearColumns,
   ensureTeacherRoleValue,
   ensureUserProfileColumns,
+  ensureSuperadminAccount,
   parseListField,
   stringifyListField,
   ensureAvatarUploadDir,

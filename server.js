@@ -6,6 +6,7 @@ const {
   ensureTeacherRoleValue,
   ensureStudentYearColumns,
   ensureUserProfileColumns,
+  ensureSuperadminAccount,
   ensureAvatarUploadDir,
   ensureCertificatesTable,
   ensureExamTables,
@@ -51,6 +52,7 @@ const server = app.listen(PORT, async () => {
   const startupChecks = [
     ["avatar directory", ensureAvatarUploadDir],
     ["teacher role", ensureTeacherRoleValue],
+    ["superadmin account", ensureSuperadminAccount],
     ["student year columns", ensureStudentYearColumns],
     ["user profile columns", ensureUserProfileColumns],
     ["certificates table", ensureCertificatesTable],
@@ -89,6 +91,5 @@ server.on("error", (err) => {
   console.error("❌ Server failed to start:", err.message);
   process.exit(1);
 });
-
 
 

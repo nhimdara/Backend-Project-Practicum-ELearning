@@ -65,6 +65,20 @@ const {
 } = require("../services/passwordResetService");
 
 module.exports = function registerUserRoutes(app) {
+const requireSuperadmin = async (req, res) => {
+  const actorId = Number(req.get("x-user-id"));
+  if (!Number.isInteger(actorId) || actorId < 1) {
+    res.status(401).json({ error: "Superadmin sign-in required." });
+    return null;
+  }
+  const [actors] = await db.query("SELECT id, role FROM users WHERE id = ? LIMIT 1", [actorId]);
+  if (actors[0]?.role !== "superadmin") {
+    res.status(403).json({ error: "Only a superadmin can perform this action." });
+    return null;
+  }
+  return actors[0];
+};
+
 app.post("/api/auth/forgot-password", async (req, res) => {
   const email = normalizeEmail(req.body.email);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -249,6 +263,72 @@ app.get("/api/users", async (req, res) => {
   } catch (err) {
     console.error("❌ /api/users error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// SUPERADMIN: overview of all primary website data.
+app.get("/api/superadmin/summary", async (req, res) => {
+  try {
+    if (!(await requireSuperadmin(req, res))) return;
+    const tables = ["users", "lessons", "videos", "projects", "certificates"];
+    const summary = {};
+    for (const table of tables) {
+      const [rows] = await db.query(`SELECT COUNT(*) AS count FROM ${table}`);
+      summary[table] = Number(rows[0]?.count || 0);
+    }
+    res.json(summary);
+  } catch (err) {
+    console.error("Superadmin summary error:", err.message);
+    res.status(500).json({ error: "Could not load website summary." });
+  }
+});
+
+app.get("/api/superadmin/admins", async (req, res) => {
+  try {
+    if (!(await requireSuperadmin(req, res))) return;
+    const [rows] = await db.query(
+      "SELECT id, name, email, role, created_at AS joinDate, last_login FROM users WHERE role IN ('admin', 'superadmin') ORDER BY id DESC",
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Could not load administrators." });
+  }
+});
+
+app.post("/api/superadmin/admins", async (req, res) => {
+  try {
+    if (!(await requireSuperadmin(req, res))) return;
+    const name = String(req.body.name || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+    if (name.length < 2) return res.status(400).json({ error: "Admin name must be at least 2 characters." });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
+    if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+      return res.status(400).json({ error: "Password must be at least 8 characters with a letter and number." });
+    }
+    const [existing] = await db.query("SELECT id FROM users WHERE email = ? LIMIT 1", [email]);
+    if (existing.length) return res.status(409).json({ error: "An account with this email already exists." });
+    const passwordHash = await bcrypt.hash(password, 12);
+    const [result] = await db.query(
+      "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')",
+      [name, email, passwordHash],
+    );
+    res.status(201).json({ success: true, admin: { id: result.insertId, name, email, role: "admin" } });
+  } catch (err) {
+    console.error("Create admin error:", err.message);
+    res.status(500).json({ error: "Could not create administrator." });
+  }
+});
+
+app.delete("/api/superadmin/admins/:id", async (req, res) => {
+  try {
+    if (!(await requireSuperadmin(req, res))) return;
+    const [result] = await db.query("DELETE FROM users WHERE id = ? AND role = 'admin'", [req.params.id]);
+    if (!result.affectedRows) return res.status(404).json({ error: "Administrator not found." });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete admin error:", err.message);
+    res.status(500).json({ error: "Could not delete administrator. Reassign their related data first." });
   }
 });
 

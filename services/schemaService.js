@@ -45,6 +45,31 @@ async function ensureTeacherRoleValue() {
   }
 }
 
+async function ensureSuperadminAccount() {
+  const email = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
+  const password = String(process.env.SUPERADMIN_PASSWORD || "");
+  const name = String(process.env.SUPERADMIN_NAME || "Super Admin").trim();
+  if (!email || !password) {
+    console.log("ℹ️ Superadmin bootstrap skipped (set SUPERADMIN_EMAIL and SUPERADMIN_PASSWORD)");
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 10) {
+    throw new Error("SUPERADMIN_EMAIL must be valid and SUPERADMIN_PASSWORD must contain at least 10 characters");
+  }
+  const bcrypt = require("bcrypt");
+  const [existing] = await db.query("SELECT id, role FROM users WHERE email = ? LIMIT 1", [email]);
+  if (existing.length) {
+    if (existing[0].role !== "superadmin") {
+      await db.query("UPDATE users SET role = 'superadmin' WHERE id = ?", [existing[0].id]);
+    }
+    console.log("✅ Superadmin account is ready");
+    return;
+  }
+  const passwordHash = await bcrypt.hash(password, 12);
+  await db.query("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'superadmin')", [name || "Super Admin", email, passwordHash]);
+  console.log("✅ Superadmin account created");
+}
+
 async function ensureUserProfileColumns() {
   try {
     const [columns] = await db.query(
@@ -81,4 +106,4 @@ async function ensureUserProfileColumns() {
   }
 }
 
-module.exports = { ensureStudentYearColumns, ensureTeacherRoleValue, ensureUserProfileColumns };
+module.exports = { ensureStudentYearColumns, ensureTeacherRoleValue, ensureUserProfileColumns, ensureSuperadminAccount };
