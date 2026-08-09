@@ -60,10 +60,33 @@ const {
 } = require("../appContext");
 
 module.exports = function registerVideoRoutes(app) {
+let videoTeacherColumnReady;
+const ensureVideoTeacherColumn = () => {
+  if (!videoTeacherColumnReady) {
+    videoTeacherColumnReady = db.query("ALTER TABLE videos ADD COLUMN IF NOT EXISTS teacher_id BIGINT NULL");
+  }
+  return videoTeacherColumnReady;
+};
+
+const requireTeacherId = async (req, res) => {
+  const teacherId = Number(req.get("x-user-id") || req.body.teacher_id);
+  if (!Number.isInteger(teacherId) || teacherId < 1) {
+    res.status(401).json({ error: "A signed-in teacher is required." });
+    return null;
+  }
+  const [teachers] = await db.query("SELECT id FROM users WHERE id = ? AND role = 'teacher' LIMIT 1", [teacherId]);
+  if (!teachers.length) {
+    res.status(403).json({ error: "Teacher account not found." });
+    return null;
+  }
+  return teacherId;
+};
+
 app.get("/api/videos", async (req, res) => {
   try {
+    await ensureVideoTeacherColumn();
     const [rows] = await db.query(
-      "SELECT id, lesson_id, title, link, thumbnail, duration_minutes, view_count, description, is_free, order_index FROM videos ORDER BY lesson_id, order_index, id",
+      "SELECT id, lesson_id, teacher_id, title, link, thumbnail, duration_minutes, view_count, description, is_free, order_index FROM videos ORDER BY lesson_id, order_index, id",
     );
     res.json(dedupeVideos(rows));
   } catch (err) {
@@ -110,12 +133,16 @@ app.post("/api/videos", async (req, res) => {
   }
 
   try {
+    await ensureVideoTeacherColumn();
+    const teacherId = await requireTeacherId(req, res);
+    if (!teacherId) return;
     const [result] = await db.query(
       `INSERT INTO videos 
-       (lesson_id, title, link, duration_minutes, description, is_free, order_index) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (lesson_id, teacher_id, title, link, duration_minutes, description, is_free, order_index) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         lesson_id,
+        teacherId,
         title.trim(),
         link.trim(),
         duration_minutes || null,
@@ -170,13 +197,17 @@ app.put("/api/videos/:id", async (req, res) => {
   }
 
   try {
+    await ensureVideoTeacherColumn();
+    const teacherId = await requireTeacherId(req, res);
+    if (!teacherId) return;
     const [result] = await db.query(
       `UPDATE videos SET 
-        lesson_id = ?, title = ?, link = ?, duration_minutes = ?,
+        lesson_id = ?, teacher_id = ?, title = ?, link = ?, duration_minutes = ?,
         description = ?, is_free = ?, order_index = ?
-       WHERE id = ?`,
+       WHERE id = ? AND (teacher_id IS NULL OR teacher_id = ?)`,
       [
         lesson_id,
+        teacherId,
         title.trim(),
         link.trim(),
         duration_minutes || null,
@@ -184,6 +215,7 @@ app.put("/api/videos/:id", async (req, res) => {
         is_free ? 1 : 0,
         order_index || 1,
         req.params.id,
+        teacherId,
       ],
     );
 
