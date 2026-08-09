@@ -26,8 +26,11 @@
     return { id: `${prefix}-${index + 6}`, question, options, answer };
   });
 }
-const ALLOWED_MAJORS = ["ITE", "IT", "Mathematics"];
-const EMAIL_DOMAIN = "elearning.com";
+const ALLOWED_MAJORS = String(process.env.APP_MAJORS || "ITE,IT,Mathematics")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const EMAIL_DOMAIN = String(process.env.EMAIL_DOMAIN || "elearning.com").trim();
 const EXAM_PASS_SCORE = 70;
 
 const EXAM_BANK = {
@@ -148,6 +151,5 @@ const EXAM_BANK = {
 };
 
 module.exports = { ALLOWED_MAJORS, EMAIL_DOMAIN, EXAM_PASS_SCORE, EXAM_BANK };
-
 
 
