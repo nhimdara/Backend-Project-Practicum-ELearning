@@ -69,7 +69,7 @@ const ensureVideoTeacherColumn = () => {
 };
 
 const requireTeacherId = async (req, res) => {
-  const teacherId = Number(req.get("x-user-id") || req.body.teacher_id);
+  const teacherId = Number(req.get("x-user-id") || req.body?.teacher_id);
   if (!Number.isInteger(teacherId) || teacherId < 1) {
     res.status(401).json({ error: "A signed-in teacher is required." });
     return null;
@@ -237,14 +237,27 @@ app.put("/api/videos/:id", async (req, res) => {
 // DELETE a video
 app.delete("/api/videos/:id", async (req, res) => {
   try {
+    await ensureVideoTeacherColumn();
+    const teacherId = await requireTeacherId(req, res);
+    if (!teacherId) return;
+
+    const [ownedVideos] = await db.query(
+      "SELECT id FROM videos WHERE id = ? AND (teacher_id IS NULL OR teacher_id = ?) LIMIT 1",
+      [req.params.id, teacherId],
+    );
+    if (!ownedVideos.length) {
+      return res.status(404).json({ error: "Video not found." });
+    }
+
     // Delete related video progress first
     await db.query("DELETE FROM video_progress WHERE video_id = ?", [
       req.params.id,
     ]);
 
-    const [result] = await db.query("DELETE FROM videos WHERE id = ?", [
-      req.params.id,
-    ]);
+    const [result] = await db.query(
+      "DELETE FROM videos WHERE id = ? AND (teacher_id IS NULL OR teacher_id = ?)",
+      [req.params.id, teacherId],
+    );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: "Video not found." });
     }
