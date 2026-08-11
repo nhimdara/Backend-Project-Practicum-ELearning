@@ -425,7 +425,17 @@ app.post("/api/certificates", async (req, res) => {
 app.get("/api/users/:id/certificates", async (req, res) => {
   try {
     await ensureCertificatesTable();
-    await syncCompletedCertificates(req.params.id);
+    // Certificate synchronization is best-effort. A malformed legacy
+    // enrollment/progress row must not prevent the user from loading
+    // certificates that already exist.
+    try {
+      await syncCompletedCertificates(req.params.id);
+    } catch (syncError) {
+      console.warn(
+        `Could not synchronize certificates for user ${req.params.id}:`,
+        syncError.message,
+      );
+    }
 
     const [rows] = await db.query(
       `SELECT id, user_id, lesson_id, title, issuer, description,
