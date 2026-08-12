@@ -385,7 +385,7 @@ async function getActorRole(req) {
     }
   }
 
-  if (["admin", "teacher"].includes(normalizedHeaderRole)) {
+  if (["superadmin", "admin", "teacher"].includes(normalizedHeaderRole)) {
     return { role: normalizedHeaderRole, userId: null };
   }
 
@@ -394,8 +394,8 @@ async function getActorRole(req) {
 
 async function requireExamQuestionManager(req, res) {
   const actor = await getActorRole(req);
-  if (!actor || !["teacher", "admin"].includes(actor.role)) {
-    res.status(403).json({ error: "Only teachers and admins can manage exam questions." });
+  if (!actor || !["superadmin", "admin", "teacher"].includes(actor.role)) {
+    res.status(403).json({ error: "Only teachers, admins, and the platform owner can manage exam questions." });
     return null;
   }
   return actor;

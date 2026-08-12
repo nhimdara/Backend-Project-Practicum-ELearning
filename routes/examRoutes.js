@@ -63,7 +63,7 @@ module.exports = function registerExamRoutes(app) {
 app.get("/api/exams/by-major/:major", async (req, res) => {
   const major = normalizeExamMajor(req.params.major);
   const actor = await getActorRole(req);
-  const includeAnswers = actor && ["teacher", "admin"].includes(actor.role);
+  const includeAnswers = actor && ["superadmin", "admin", "teacher"].includes(actor.role);
   const exam = await publicExam(major, { includeAnswers });
 
   if (!exam) {
@@ -73,7 +73,7 @@ app.get("/api/exams/by-major/:major", async (req, res) => {
   res.json(exam);
 });
 
-// ADD a student exam question (teachers and admins only)
+// ADD a student exam question (teachers, admins, and platform owner)
 app.post("/api/exams/by-major/:major/questions", async (req, res) => {
   const actor = await requireExamQuestionManager(req, res);
   if (!actor) return;
@@ -140,7 +140,7 @@ app.post("/api/exams/by-major/:major/questions", async (req, res) => {
   }
 });
 
-// UPDATE a student exam question (teachers and admins only)
+// UPDATE a student exam question (teachers, admins, and platform owner)
 app.put("/api/exams/by-major/:major/questions/:questionId", async (req, res) => {
   const actor = await requireExamQuestionManager(req, res);
   if (!actor) return;
@@ -208,7 +208,7 @@ app.put("/api/exams/by-major/:major/questions/:questionId", async (req, res) => 
   }
 });
 
-// DELETE a student exam question (teachers and admins only)
+// DELETE a student exam question (teachers, admins, and platform owner)
 app.delete("/api/exams/by-major/:major/questions/:questionId", async (req, res) => {
   const actor = await requireExamQuestionManager(req, res);
   if (!actor) return;
