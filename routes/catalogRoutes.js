@@ -63,7 +63,10 @@ module.exports = function registerCatalogRoutes(app) {
 app.get("/api/years", async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT id, name FROM years ORDER BY display_order, id",
+      `SELECT id, name
+       FROM years
+       WHERE display_order BETWEEN 1 AND 4
+       ORDER BY display_order, id`,
     );
     res.json(rows);
   } catch (err) {

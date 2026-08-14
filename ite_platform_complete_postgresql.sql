@@ -1127,8 +1127,7 @@ INSERT INTO years (id, name, display_order) VALUES
 (1, 'Foundation', 1),
 (2, 'Second Year', 2),
 (3, 'Third Year', 3),
-(4, 'Fourth Year', 4),
-(5, 'name', 99);
+(4, 'Fourth Year', 4);
 
 --
 -- Indexes for dumped tables
