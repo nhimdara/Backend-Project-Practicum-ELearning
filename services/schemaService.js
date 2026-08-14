@@ -57,10 +57,23 @@ async function ensureSuperadminAccount() {
     throw new Error("SUPERADMIN_EMAIL must be valid and SUPERADMIN_PASSWORD must contain at least 10 characters");
   }
   const bcrypt = require("bcrypt");
-  const [existing] = await db.query("SELECT id, role FROM users WHERE email = ? LIMIT 1", [email]);
+  const [existing] = await db.query(
+    "SELECT id, role, password_hash FROM users WHERE LOWER(email) = ? LIMIT 1",
+    [email],
+  );
   if (existing.length) {
-    if (existing[0].role !== "superadmin") {
-      await db.query("UPDATE users SET role = 'superadmin' WHERE id = ?", [existing[0].id]);
+    const passwordMatches = await bcrypt.compare(
+      password,
+      existing[0].password_hash,
+    );
+    if (existing[0].role !== "superadmin" || !passwordMatches) {
+      const passwordHash = passwordMatches
+        ? existing[0].password_hash
+        : await bcrypt.hash(password, 12);
+      await db.query(
+        "UPDATE users SET email = ?, role = 'superadmin', password_hash = ? WHERE id = ?",
+        [email, passwordHash, existing[0].id],
+      );
     }
     console.log("✅ Superadmin account is ready");
     return;
