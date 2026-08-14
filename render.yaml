@@ -13,6 +13,8 @@ services:
         fromDatabase:
           name: learnflow-postgres
           property: connectionString
+      - key: DB_SSL
+        value: "true"
       - key: GROQ_API_KEY
         sync: false
 
