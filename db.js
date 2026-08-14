@@ -11,9 +11,12 @@ const connectionOptions = process.env.DATABASE_URL
         port: Number(process.env.DB_PORT || 5432),
     };
 const sslSetting = String(process.env.DB_SSL || "").trim().toLowerCase();
-const useSsl = sslSetting
-  ? sslSetting === "true"
-  : process.env.NODE_ENV === "production" && Boolean(process.env.DATABASE_URL);
+// Hosted PostgreSQL providers (including Render) require TLS for their
+// DATABASE_URL connections. Do not let a stale local DB_SSL=false setting
+// disable TLS in production.
+const useSsl = process.env.NODE_ENV === "production" && Boolean(process.env.DATABASE_URL)
+  ? true
+  : sslSetting === "true";
 
 const pool = new Pool({
   ...connectionOptions,
