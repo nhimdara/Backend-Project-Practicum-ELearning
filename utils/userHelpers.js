@@ -27,11 +27,15 @@ function getStudentEmailNameParts(name) {
   return { firstName, lastName };
 }
 
-function buildStudentEmail(name, startYear, endYear) {
+function buildStudentEmail(name, startYear, endYear, major = "") {
   const { firstName, lastName } = getStudentEmailNameParts(name);
   const start = String(startYear).slice(-2);
   const end = String(endYear).slice(-2);
-  return `${firstName}.${lastName}.${start}${end}@${EMAIL_DOMAIN}`;
+  const cleanMajor = major
+    ? String(major).toLowerCase().replace(/[^a-z0-9]/g, "")
+    : "";
+  const majorPart = cleanMajor ? `.${cleanMajor}` : "";
+  return `${firstName}.${lastName}${majorPart}.${start}${end}@${EMAIL_DOMAIN}`;
 }
 
 function buildStaffEmail(name, role) {

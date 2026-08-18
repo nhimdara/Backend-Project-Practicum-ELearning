@@ -416,21 +416,42 @@ app.post("/api/users/students", async (req, res) => {
       .json({ error: "Password must be at least 6 characters." });
   }
 
-  const generatedEmail = (
-    email || buildStudentEmail(cleanName, parsedStartYear, parsedEndYear)
+  let generatedEmail = (
+    email || buildStudentEmail(cleanName, parsedStartYear, parsedEndYear, cleanMajor)
   )
     .toLowerCase()
     .trim();
   const selectedAcademicYear = getCurrentAcademicYear(parsedStartYear);
 
   try {
-    const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
-      generatedEmail,
-    ]);
-    if (existing.length > 0) {
-      return res
-        .status(409)
-        .json({ error: "A student with this generated email already exists." });
+    if (!email) {
+      let suffix = 2;
+      let [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
+        generatedEmail,
+      ]);
+      while (existing.length > 0) {
+        const { firstName, lastName } = getStudentEmailNameParts(cleanName);
+        const start = String(parsedStartYear).slice(-2);
+        const end = String(parsedEndYear).slice(-2);
+        const cleanMajorStr = cleanMajor
+          ? String(cleanMajor).toLowerCase().replace(/[^a-z0-9]/g, "")
+          : "";
+        const majorPart = cleanMajorStr ? `.${cleanMajorStr}` : "";
+        generatedEmail = `${firstName}.${lastName}${majorPart}${suffix}.${start}${end}@${EMAIL_DOMAIN}`;
+        suffix++;
+        [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
+          generatedEmail,
+        ]);
+      }
+    } else {
+      const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
+        generatedEmail,
+      ]);
+      if (existing.length > 0) {
+        return res
+          .status(409)
+          .json({ error: "A student with this generated email already exists." });
+      }
     }
 
     const password_hash = await bcrypt.hash(cleanPassword, 10);
